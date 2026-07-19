@@ -1,0 +1,540 @@
+diff --git a/lib/db/database_helper.dart b/lib/db/database_helper.dart
+index 7c03557..db4f483 100644
+--- a/lib/db/database_helper.dart
++++ b/lib/db/database_helper.dart
+@@ -109,11 +109,10 @@ class DatabaseHelper {
+ 
+   Future<void> updateSetting(String key, String value) async {
+     final db = await instance.database;
+-    await db.update(
++    await db.insert(
+       'settings',
+-      {'value': value},
+-      where: 'key = ?',
+-      whereArgs: [key],
++      {'key': key, 'value': value},
++      conflictAlgorithm: ConflictAlgorithm.replace,
+     );
+   }
+ 
+diff --git a/lib/providers/cart_provider.dart b/lib/providers/cart_provider.dart
+index cf132cb..7504e27 100644
+--- a/lib/providers/cart_provider.dart
++++ b/lib/providers/cart_provider.dart
+@@ -10,18 +10,29 @@ class CartNotifier extends Notifier<List<CartItem>> {
+     return [];
+   }
+ 
+-  void addProduct(Product product) {
++  /// Adds one unit of [product] to the cart, enforcing stock limits.
++  /// Returns true if the item was added, false if it was blocked because
++  /// the requested quantity would exceed available stock.
++  bool addProduct(Product product) {
+     final index = state.indexWhere((item) => item.product.id == product.id);
+     if (index >= 0) {
+       final existing = state[index];
++      final newQuantity = existing.quantity + 1;
++      if (newQuantity > product.stock) {
++        return false;
++      }
+       state = [
+         ...state.sublist(0, index),
+-        existing.copyWith(quantity: existing.quantity + 1),
++        existing.copyWith(quantity: newQuantity),
+         ...state.sublist(index + 1),
+       ];
+     } else {
++      if (product.stock <= 0) {
++        return false;
++      }
+       state = [...state, CartItem(product: product)];
+     }
++    return true;
+   }
+ 
+   void updateQuantity(int productId, int quantity) {
+diff --git a/lib/screens/settings_screen.dart b/lib/screens/settings_screen.dart
+index 9723c03..b0bf66c 100644
+--- a/lib/screens/settings_screen.dart
++++ b/lib/screens/settings_screen.dart
+@@ -1,7 +1,7 @@
+ import 'package:flutter/material.dart';
+ import 'package:flutter_riverpod/flutter_riverpod.dart';
+ import '../db/database_helper.dart';
+-import '../providers/product_provider.dart';
++import '../services/printer_service.dart';
+ 
+ class SettingsScreen extends ConsumerStatefulWidget {
+   const SettingsScreen({super.key});
+@@ -15,6 +15,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
+   final _passwordController = TextEditingController();
+   bool _loading = true;
+ 
++  // Printer connection mode: network (IP) or windows (USB/Bluetooth via
++  // whatever is installed/paired in Windows).
++  PrinterMode _printerMode = PrinterMode.network;
++  List<String> _windowsPrinters = [];
++  String? _selectedWindowsPrinter;
++  bool _loadingWindowsPrinters = false;
++
+   @override
+   void initState() {
+     super.initState();
+@@ -24,9 +31,35 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
+   Future<void> _loadSettings() async {
+     final ip = await DatabaseHelper.instance.getSetting('printer_ip');
+     final pass = await DatabaseHelper.instance.getSetting('inventory_password');
++    final mode = await DatabaseHelper.instance.getSetting('printer_mode');
++    final winPrinter =
++        await DatabaseHelper.instance.getSetting('windows_printer_name');
+     _printerIpController.text = ip ?? '';
+     _passwordController.text = pass ?? '';
++    _printerMode =
++        mode == 'windows' ? PrinterMode.windows : PrinterMode.network;
++    _selectedWindowsPrinter =
++        (winPrinter != null && winPrinter.isNotEmpty) ? winPrinter : null;
+     setState(() => _loading = false);
++    if (_printerMode == PrinterMode.windows) {
++      _refreshWindowsPrinters();
++    }
++  }
++
++  Future<void> _refreshWindowsPrinters() async {
++    setState(() => _loadingWindowsPrinters = true);
++    final printers = await PrinterService.getWindowsPrinters();
++    if (!mounted) return;
++    setState(() {
++      _windowsPrinters = printers;
++      _loadingWindowsPrinters = false;
++      // Keep the saved selection if it's still available; otherwise fall
++      // back to nothing selected rather than silently picking a wrong one.
++      if (_selectedWindowsPrinter != null &&
++          !printers.contains(_selectedWindowsPrinter)) {
++        _selectedWindowsPrinter = null;
++      }
++    });
+   }
+ 
+   Future<void> _save() async {
+@@ -38,6 +71,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
+       'inventory_password',
+       _passwordController.text.trim(),
+     );
++    await DatabaseHelper.instance.updateSetting(
++      'printer_mode',
++      _printerMode == PrinterMode.windows ? 'windows' : 'network',
++    );
++    await DatabaseHelper.instance.updateSetting(
++      'windows_printer_name',
++      _selectedWindowsPrinter ?? '',
++    );
+     if (mounted) {
+       ScaffoldMessenger.of(
+         context,
+@@ -58,30 +99,93 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
+           crossAxisAlignment: CrossAxisAlignment.start,
+           children: [
+             const Text(
+-              'Thermal Printer IP Address',
++              'Receipt Printer',
+               style: TextStyle(fontWeight: FontWeight.w600),
+             ),
+             const SizedBox(height: 8),
+-            TextField(
+-              controller: _printerIpController,
+-              decoration: const InputDecoration(
+-                hintText: 'e.g. 192.168.1.50',
+-                border: OutlineInputBorder(),
+-              ),
+-            ),
+-            const SizedBox(height: 24),
+-            OutlinedButton(
+-              onPressed: () async {
+-                await DatabaseHelper.instance.seedDummyProducts();
+-                await ref.read(productProvider.notifier).loadProducts();
+-                if (context.mounted) {
+-                  ScaffoldMessenger.of(context).showSnackBar(
+-                    const SnackBar(content: Text('100 dummy products added')),
+-                  );
++            SegmentedButton<PrinterMode>(
++              segments: const [
++                ButtonSegment(
++                  value: PrinterMode.network,
++                  label: Text('Network (Wi-Fi/IP)'),
++                  icon: Icon(Icons.wifi),
++                ),
++                ButtonSegment(
++                  value: PrinterMode.windows,
++                  label: Text('USB / Bluetooth'),
++                  icon: Icon(Icons.usb),
++                ),
++              ],
++              selected: {_printerMode},
++              onSelectionChanged: (selected) {
++                setState(() => _printerMode = selected.first);
++                if (_printerMode == PrinterMode.windows &&
++                    _windowsPrinters.isEmpty) {
++                  _refreshWindowsPrinters();
+                 }
+               },
+-              child: const Text('Seed 100 Dummy Products (dev only)'),
+             ),
++            const SizedBox(height: 16),
++            if (_printerMode == PrinterMode.network) ...[
++              TextField(
++                controller: _printerIpController,
++                decoration: const InputDecoration(
++                  labelText: 'Printer IP Address',
++                  hintText: 'e.g. 192.168.1.50',
++                  border: OutlineInputBorder(),
++                ),
++              ),
++            ] else ...[
++              Row(
++                children: [
++                  Expanded(
++                    child: DropdownButtonFormField<String>(
++                      initialValue: _windowsPrinters.contains(_selectedWindowsPrinter)
++                          ? _selectedWindowsPrinter
++                          : null,
++                      decoration: const InputDecoration(
++                        labelText: 'Windows Printer',
++                        border: OutlineInputBorder(),
++                      ),
++                      hint: Text(_loadingWindowsPrinters
++                          ? 'Scanning...'
++                          : (_windowsPrinters.isEmpty
++                              ? 'No printers found'
++                              : 'Select a printer')),
++                      items: _windowsPrinters
++                          .map((name) => DropdownMenuItem(
++                                value: name,
++                                child: Text(name, overflow: TextOverflow.ellipsis),
++                              ))
++                          .toList(),
++                      onChanged: (value) {
++                        setState(() => _selectedWindowsPrinter = value);
++                      },
++                    ),
++                  ),
++                  const SizedBox(width: 8),
++                  IconButton(
++                    tooltip: 'Rescan printers',
++                    icon: _loadingWindowsPrinters
++                        ? const SizedBox(
++                            width: 18,
++                            height: 18,
++                            child: CircularProgressIndicator(strokeWidth: 2),
++                          )
++                        : const Icon(Icons.refresh),
++                    onPressed:
++                        _loadingWindowsPrinters ? null : _refreshWindowsPrinters,
++                  ),
++                ],
++              ),
++              const SizedBox(height: 6),
++              const Text(
++                'Pair or connect the printer in Windows first (Settings > '
++                'Bluetooth & devices, or plug in via USB and install its '
++                'driver), then tap refresh to see it here.',
++                style: TextStyle(fontSize: 12, color: Colors.black54),
++              ),
++            ],
+             const SizedBox(height: 24),
+             const Text(
+               'Inventory Password',
+diff --git a/lib/services/printer_service.dart b/lib/services/printer_service.dart
+index a08e98f..b36a72e 100644
+--- a/lib/services/printer_service.dart
++++ b/lib/services/printer_service.dart
+@@ -1,37 +1,42 @@
++import 'dart:typed_data';
+ import 'package:esc_pos_printer/esc_pos_printer.dart';
+ import 'package:esc_pos_utils/esc_pos_utils.dart';
++import 'package:windows_printer/windows_printer.dart';
+ import '../models/cart_item.dart';
+ 
++/// How the receipt printer is connected.
++/// - network: existing IP/Wi-Fi printer, talked to directly over TCP (port 9100).
++/// - windows: any printer already installed/paired in Windows (USB or
++///   Bluetooth) — Windows' own driver/spooler handles the physical
++///   connection, we just send it raw ESC/POS bytes.
++enum PrinterMode { network, windows }
++
+ class PrinterService {
+-  static Future<PosPrintResult> printReceipt({
+-    required String printerIp,
++  /// Builds the ESC/POS byte stream for a receipt using esc_pos_utils.
++  /// Shared by both network and Windows raw-print paths so the receipt
++  /// layout stays identical regardless of connection type.
++  static Future<List<int>> _buildReceiptBytes({
+     required List<CartItem> items,
+     required double total,
+-    String storeName = 'Hardware Store',
++    required String storeName,
++    required CapabilityProfile profile,
+   }) async {
+-    final profile = await CapabilityProfile.load();
+-    final printer = NetworkPrinter(PaperSize.mm58, profile);
+-
+-    final PosPrintResult connectResult =
+-        await printer.connect(printerIp, port: 9100);
++    final generator = Generator(PaperSize.mm58, profile);
++    List<int> bytes = [];
+ 
+-    if (connectResult != PosPrintResult.success) {
+-      return connectResult;
+-    }
+-
+-    printer.text(
++    bytes += generator.text(
+       storeName,
+       styles: const PosStyles(align: PosAlign.center, bold: true, height: PosTextSize.size2, width: PosTextSize.size2),
+     );
+-    printer.text(
++    bytes += generator.text(
+       DateTime.now().toString().substring(0, 16),
+       styles: const PosStyles(align: PosAlign.center),
+     );
+-    printer.hr();
++    bytes += generator.hr();
+ 
+     for (final item in items) {
+-      printer.text('${item.product.name} x${item.quantity}');
+-      printer.row([
++      bytes += generator.text('${item.product.name} x${item.quantity}');
++      bytes += generator.row([
+         PosColumn(text: '', width: 8),
+         PosColumn(
+           text: 'Rs ${item.lineTotal.toStringAsFixed(0)}',
+@@ -41,8 +46,8 @@ class PrinterService {
+       ]);
+     }
+ 
+-    printer.hr();
+-    printer.row([
++    bytes += generator.hr();
++    bytes += generator.row([
+       PosColumn(text: 'TOTAL', width: 6, styles: const PosStyles(bold: true, height: PosTextSize.size2)),
+       PosColumn(
+         text: 'Rs ${total.toStringAsFixed(0)}',
+@@ -51,15 +56,126 @@ class PrinterService {
+       ),
+     ]);
+ 
+-    printer.hr();
+-    printer.text(
++    bytes += generator.hr();
++    bytes += generator.text(
+       'Thank you for your purchase!',
+       styles: const PosStyles(align: PosAlign.center),
+     );
+-    printer.feed(2);
+-    printer.cut();
++    bytes += generator.feed(2);
++    bytes += generator.cut();
++
++    return bytes;
++  }
++
++  /// Network (IP) printer — unchanged from before, just refactored to
++  /// share the receipt-building code above.
++  static Future<PosPrintResult> _printNetwork({
++    required String printerIp,
++    required List<CartItem> items,
++    required double total,
++    required String storeName,
++  }) async {
++    final profile = await CapabilityProfile.load();
++    final printer = NetworkPrinter(PaperSize.mm58, profile);
++
++    final PosPrintResult connectResult =
++        await printer.connect(printerIp, port: 9100);
++
++    if (connectResult != PosPrintResult.success) {
++      return connectResult;
++    }
+ 
++    final bytes = await _buildReceiptBytes(
++      items: items,
++      total: total,
++      storeName: storeName,
++      profile: profile,
++    );
++    printer.rawBytes(bytes);
+     printer.disconnect();
+     return PosPrintResult.success;
+   }
++
++  /// USB / Bluetooth printer, reached through the Windows print spooler.
++  /// Works for any printer already installed & paired in Windows —
++  /// Windows itself owns the USB/Bluetooth connection, we just send it
++  /// raw ESC/POS bytes so it behaves like a real thermal printer, not a
++  /// regular document printer.
++  static Future<bool> _printWindows({
++    required String printerName,
++    required List<CartItem> items,
++    required double total,
++    required String storeName,
++  }) async {
++    final profile = await CapabilityProfile.load();
++    final bytes = await _buildReceiptBytes(
++      items: items,
++      total: total,
++      storeName: storeName,
++      profile: profile,
++    );
++    return await WindowsPrinter.printRawData(
++      printerName: printerName,
++      data: Uint8List.fromList(bytes),
++      useRawDatatype: true,
++    );
++  }
++
++  /// Returns the list of printers Windows currently knows about
++  /// (installed USB or paired Bluetooth printers show up here).
++  static Future<List<String>> getWindowsPrinters() async {
++    try {
++      return await WindowsPrinter.getAvailablePrinters();
++    } catch (_) {
++      return [];
++    }
++  }
++
++  /// Single entry point used by checkout. Reads which mode + target is
++  /// configured and routes accordingly. Never throws — returns true/false
++  /// so callers can show a "printed" / "failed" message, matching how the
++  /// old network-only version behaved (fire-and-forget from checkout).
++  static Future<bool> printReceiptAuto({
++    required PrinterMode mode,
++    required String target, // IP for network mode, printer name for windows mode
++    required List<CartItem> items,
++    required double total,
++    String storeName = 'Hardware Store',
++  }) async {
++    try {
++      if (mode == PrinterMode.network) {
++        final result = await _printNetwork(
++          printerIp: target,
++          items: items,
++          total: total,
++          storeName: storeName,
++        );
++        return result == PosPrintResult.success;
++      } else {
++        return await _printWindows(
++          printerName: target,
++          items: items,
++          total: total,
++          storeName: storeName,
++        );
++      }
++    } catch (_) {
++      return false;
++    }
++  }
++
++  /// Kept for backward compatibility with any existing callers.
++  static Future<PosPrintResult> printReceipt({
++    required String printerIp,
++    required List<CartItem> items,
++    required double total,
++    String storeName = 'Hardware Store',
++  }) {
++    return _printNetwork(
++      printerIp: printerIp,
++      items: items,
++      total: total,
++      storeName: storeName,
++    );
++  }
+ }
+\ No newline at end of file
+diff --git a/lib/widgets/cart_sidebar.dart b/lib/widgets/cart_sidebar.dart
+index d387e98..cc71511 100644
+--- a/lib/widgets/cart_sidebar.dart
++++ b/lib/widgets/cart_sidebar.dart
+@@ -168,6 +168,17 @@ class CartSidebar extends ConsumerWidget {
+     final total = ref.read(cartProvider.notifier).total;
+ 
+     final printerIp = await DatabaseHelper.instance.getSetting('printer_ip');
++    final printerModeSetting =
++        await DatabaseHelper.instance.getSetting('printer_mode');
++    final windowsPrinterName =
++        await DatabaseHelper.instance.getSetting('windows_printer_name');
++
++    final mode = printerModeSetting == 'windows'
++        ? PrinterMode.windows
++        : PrinterMode.network;
++    final target =
++        mode == PrinterMode.windows ? (windowsPrinterName ?? '') : (printerIp ?? '');
++    final printerConfigured = target.isNotEmpty;
+ 
+     for (final item in cartItems) {
+       if (item.product.id != null) {
+@@ -177,9 +188,12 @@ class CartSidebar extends ConsumerWidget {
+ 
+     ref.read(cartProvider.notifier).clearCart();
+ 
+-    if (printerIp != null && printerIp.isNotEmpty) {
+-      PrinterService.printReceipt(
+-        printerIp: printerIp,
++    // Fire-and-forget, same as before: checkout completes instantly and
++    // doesn't wait on or react to the print result.
++    if (printerConfigured) {
++      PrinterService.printReceiptAuto(
++        mode: mode,
++        target: target,
+         items: cartItems,
+         total: total,
+       );
+@@ -189,9 +203,9 @@ class CartSidebar extends ConsumerWidget {
+       ScaffoldMessenger.of(context).showSnackBar(
+         SnackBar(
+           content: Text(
+-            printerIp == null || printerIp.isEmpty
+-                ? 'Sale completed (no printer set)'
+-                : 'Sale completed & printing',
++            printerConfigured
++                ? 'Sale completed & printing'
++                : 'Sale completed (no printer set)',
+           ),
+         ),
+       );
+diff --git a/lib/widgets/product_grid.dart b/lib/widgets/product_grid.dart
+index 5dd1e46..da6132f 100644
+--- a/lib/widgets/product_grid.dart
++++ b/lib/widgets/product_grid.dart
+@@ -198,7 +198,19 @@ class _ProductCardState extends ConsumerState<_ProductCard> {
+           child: InkWell(
+             onTap: outOfStock
+                 ? null
+-                : () => ref.read(cartProvider.notifier).addProduct(product),
++                : () {
++                    final added =
++                        ref.read(cartProvider.notifier).addProduct(product);
++                    if (!added) {
++                      ScaffoldMessenger.of(context).showSnackBar(
++                        SnackBar(
++                          content: Text(
++                              'Only ${product.stock} "${product.name}" in stock'),
++                          duration: const Duration(seconds: 2),
++                        ),
++                      );
++                    }
++                  },
+             borderRadius: BorderRadius.circular(8),
+             child: Container(
+               decoration: BoxDecoration(
+diff --git a/pubspec.yaml b/pubspec.yaml
+index 330e315..f6b4b34 100644
+--- a/pubspec.yaml
++++ b/pubspec.yaml
+@@ -41,6 +41,7 @@ dependencies:
+   esc_pos_utils: ^1.1.0
+   esc_pos_printer: ^4.1.0
+   file_picker: 8.1.2
++  windows_printer: ^0.2.1
+ dev_dependencies:
+   flutter_test:
+     sdk: flutter

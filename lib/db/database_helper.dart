@@ -109,11 +109,10 @@ class DatabaseHelper {
 
   Future<void> updateSetting(String key, String value) async {
     final db = await instance.database;
-    await db.update(
+    await db.insert(
       'settings',
-      {'value': value},
-      where: 'key = ?',
-      whereArgs: [key],
+      {'key': key, 'value': value},
+      conflictAlgorithm: ConflictAlgorithm.replace,
     );
   }
 

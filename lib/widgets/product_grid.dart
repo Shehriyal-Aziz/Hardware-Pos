@@ -19,13 +19,16 @@ class _ProductGridState extends ConsumerState<ProductGrid> {
 
   List<Product> _suggestions(List<Product> products) {
     if (searchQuery.isEmpty) return [];
-    final matches =
-        products.where((p) => fuzzyMatch(p.name, searchQuery)).toList();
+    final matches = products
+        .where((p) => fuzzyMatch(p.name, searchQuery))
+        .toList();
     matches.sort((a, b) {
-      final aExact =
-          a.name.toLowerCase().contains(searchQuery.toLowerCase()) ? 0 : 1;
-      final bExact =
-          b.name.toLowerCase().contains(searchQuery.toLowerCase()) ? 0 : 1;
+      final aExact = a.name.toLowerCase().contains(searchQuery.toLowerCase())
+          ? 0
+          : 1;
+      final bExact = b.name.toLowerCase().contains(searchQuery.toLowerCase())
+          ? 0
+          : 1;
       return aExact.compareTo(bExact);
     });
     return matches.take(6).toList();
@@ -35,15 +38,20 @@ class _ProductGridState extends ConsumerState<ProductGrid> {
   Widget build(BuildContext context) {
     final products = ref.watch(productProvider);
 
+    const soldOutCategory = 'Sold Out';
     final categories = [
       'All',
+      soldOutCategory,
       ...{for (final p in products) p.category},
     ];
 
     final filtered = products.where((p) {
       final matchesSearch = fuzzyMatch(p.name, searchQuery);
-      final matchesCategory =
-          selectedCategory == 'All' || p.category == selectedCategory;
+      final matchesCategory = selectedCategory == 'All'
+          ? true
+          : selectedCategory == soldOutCategory
+          ? p.stock <= 0
+          : p.category == selectedCategory;
       return matchesSearch && matchesCategory;
     }).toList();
 
@@ -86,7 +94,8 @@ class _ProductGridState extends ConsumerState<ProductGrid> {
                         dense: true,
                         title: Text(p.name),
                         subtitle: Text(
-                            '${p.category} • Rs ${p.price.toStringAsFixed(0)}'),
+                          '${p.category} • Rs ${p.price.toStringAsFixed(0)}',
+                        ),
                         onTap: () {
                           setState(() {
                             searchQuery = p.name;
@@ -107,20 +116,29 @@ class _ProductGridState extends ConsumerState<ProductGrid> {
             padding: const EdgeInsets.symmetric(horizontal: 12),
             children: categories.map((cat) {
               final isSelected = cat == selectedCategory;
+              final isSoldOutTab = cat == soldOutCategory;
+              final soldOutCount = isSoldOutTab
+                  ? products.where((p) => p.stock <= 0).length
+                  : 0;
               return Padding(
                 padding: const EdgeInsets.only(right: 8),
                 child: ChoiceChip(
-                  label: Text(cat),
+                  label: Text(isSoldOutTab ? '$cat ($soldOutCount)' : cat),
                   selected: isSelected,
                   onSelected: (_) => setState(() {
                     selectedCategory = cat;
                     searchQuery = '';
                     _searchController.clear();
                   }),
-                  selectedColor: Colors.black,
-                  backgroundColor: Colors.grey[100],
+                  selectedColor: isSoldOutTab ? Colors.red[700] : Colors.black,
+                  backgroundColor: isSoldOutTab
+                      ? Colors.red[50]
+                      : Colors.grey[100],
                   labelStyle: TextStyle(
-                    color: isSelected ? Colors.white : Colors.black,
+                    color: isSelected
+                        ? Colors.white
+                        : (isSoldOutTab ? Colors.red[700] : Colors.black),
+                    fontWeight: isSoldOutTab ? FontWeight.w600 : null,
                   ),
                 ),
               );
@@ -134,8 +152,7 @@ class _ProductGridState extends ConsumerState<ProductGrid> {
               : LayoutBuilder(
                   builder: (context, constraints) {
                     final width = constraints.maxWidth;
-                    final crossAxisCount =
-                        (width / 180).floor().clamp(1, 8);
+                    final crossAxisCount = (width / 180).floor().clamp(1, 8);
                     return GridView.builder(
                       padding: const EdgeInsets.all(12),
                       gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
@@ -198,7 +215,21 @@ class _ProductCardState extends ConsumerState<_ProductCard> {
           child: InkWell(
             onTap: outOfStock
                 ? null
-                : () => ref.read(cartProvider.notifier).addProduct(product),
+                : () {
+                    final added = ref
+                        .read(cartProvider.notifier)
+                        .addProduct(product);
+                    if (!added) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(
+                            'Only ${product.stock} "${product.name}" in stock',
+                          ),
+                          duration: const Duration(seconds: 2),
+                        ),
+                      );
+                    }
+                  },
             borderRadius: BorderRadius.circular(8),
             child: Container(
               decoration: BoxDecoration(
@@ -213,7 +244,8 @@ class _ProductCardState extends ConsumerState<_ProductCard> {
                   Expanded(
                     child: ClipRRect(
                       borderRadius: BorderRadius.circular(6),
-                      child: product.imagePath != null &&
+                      child:
+                          product.imagePath != null &&
                               product.imagePath!.isNotEmpty
                           ? Image.file(
                               File(product.imagePath!),
@@ -227,7 +259,10 @@ class _ProductCardState extends ConsumerState<_ProductCard> {
                   const SizedBox(height: 6),
                   Text(
                     product.name,
-                    style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 14,
+                    ),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -244,7 +279,10 @@ class _ProductCardState extends ConsumerState<_ProductCard> {
                       Flexible(
                         child: Text(
                           'Rs ${product.price.toStringAsFixed(0)}',
-                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                          style: const TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 13,
+                          ),
                           overflow: TextOverflow.ellipsis,
                         ),
                       ),
@@ -275,7 +313,11 @@ class _ProductCardState extends ConsumerState<_ProductCard> {
       width: double.infinity,
       color: Colors.grey[200],
       child: const Center(
-        child: Icon(Icons.inventory_2_outlined, color: Colors.black26, size: 32),
+        child: Icon(
+          Icons.inventory_2_outlined,
+          color: Colors.black26,
+          size: 32,
+        ),
       ),
     );
   }
@@ -296,9 +338,13 @@ bool fuzzyMatch(String text, String query) {
         if (a[i - 1] == b[j - 1]) {
           dp[i][j] = dp[i - 1][j - 1];
         } else {
-          dp[i][j] = 1 +
-              [dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]]
-                  .reduce((x, y) => x < y ? x : y);
+          dp[i][j] =
+              1 +
+              [
+                dp[i - 1][j],
+                dp[i][j - 1],
+                dp[i - 1][j - 1],
+              ].reduce((x, y) => x < y ? x : y);
         }
       }
     }

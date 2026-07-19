@@ -41,6 +41,7 @@ dependencies:
   esc_pos_utils: ^1.1.0
   esc_pos_printer: ^4.1.0
   file_picker: 8.1.2
+  windows_printer: ^0.2.1
 dev_dependencies:
   flutter_test:
     sdk: flutter

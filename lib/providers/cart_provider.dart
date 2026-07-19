@@ -10,18 +10,29 @@ class CartNotifier extends Notifier<List<CartItem>> {
     return [];
   }
 
-  void addProduct(Product product) {
+  /// Adds one unit of [product] to the cart, enforcing stock limits.
+  /// Returns true if the item was added, false if it was blocked because
+  /// the requested quantity would exceed available stock.
+  bool addProduct(Product product) {
     final index = state.indexWhere((item) => item.product.id == product.id);
     if (index >= 0) {
       final existing = state[index];
+      final newQuantity = existing.quantity + 1;
+      if (newQuantity > product.stock) {
+        return false;
+      }
       state = [
         ...state.sublist(0, index),
-        existing.copyWith(quantity: existing.quantity + 1),
+        existing.copyWith(quantity: newQuantity),
         ...state.sublist(index + 1),
       ];
     } else {
+      if (product.stock <= 0) {
+        return false;
+      }
       state = [...state, CartItem(product: product)];
     }
+    return true;
   }
 
   void updateQuantity(int productId, int quantity) {

@@ -1,0 +1,83 @@
+diff --git a/lib/widgets/product_grid.dart b/lib/widgets/product_grid.dart
+index 5dd1e46..676da90 100644
+--- a/lib/widgets/product_grid.dart
++++ b/lib/widgets/product_grid.dart
+@@ -35,15 +35,20 @@ class _ProductGridState extends ConsumerState<ProductGrid> {
+   Widget build(BuildContext context) {
+     final products = ref.watch(productProvider);
+ 
++    const soldOutCategory = 'Sold Out';
+     final categories = [
+       'All',
++      soldOutCategory,
+       ...{for (final p in products) p.category},
+     ];
+ 
+     final filtered = products.where((p) {
+       final matchesSearch = fuzzyMatch(p.name, searchQuery);
+-      final matchesCategory =
+-          selectedCategory == 'All' || p.category == selectedCategory;
++      final matchesCategory = selectedCategory == 'All'
++          ? true
++          : selectedCategory == soldOutCategory
++              ? p.stock <= 0
++              : p.category == selectedCategory;
+       return matchesSearch && matchesCategory;
+     }).toList();
+ 
+@@ -107,20 +112,30 @@ class _ProductGridState extends ConsumerState<ProductGrid> {
+             padding: const EdgeInsets.symmetric(horizontal: 12),
+             children: categories.map((cat) {
+               final isSelected = cat == selectedCategory;
++              final isSoldOutTab = cat == soldOutCategory;
++              final soldOutCount = isSoldOutTab
++                  ? products.where((p) => p.stock <= 0).length
++                  : 0;
+               return Padding(
+                 padding: const EdgeInsets.only(right: 8),
+                 child: ChoiceChip(
+-                  label: Text(cat),
++                  label: Text(
++                    isSoldOutTab ? '$cat ($soldOutCount)' : cat,
++                  ),
+                   selected: isSelected,
+                   onSelected: (_) => setState(() {
+                     selectedCategory = cat;
+                     searchQuery = '';
+                     _searchController.clear();
+                   }),
+-                  selectedColor: Colors.black,
+-                  backgroundColor: Colors.grey[100],
++                  selectedColor: isSoldOutTab ? Colors.red[700] : Colors.black,
++                  backgroundColor:
++                      isSoldOutTab ? Colors.red[50] : Colors.grey[100],
+                   labelStyle: TextStyle(
+-                    color: isSelected ? Colors.white : Colors.black,
++                    color: isSelected
++                        ? Colors.white
++                        : (isSoldOutTab ? Colors.red[700] : Colors.black),
++                    fontWeight: isSoldOutTab ? FontWeight.w600 : null,
+                   ),
+                 ),
+               );
+@@ -198,7 +213,19 @@ class _ProductCardState extends ConsumerState<_ProductCard> {
+           child: InkWell(
+             onTap: outOfStock
+                 ? null
+-                : () => ref.read(cartProvider.notifier).addProduct(product),
++                : () {
++                    final added =
++                        ref.read(cartProvider.notifier).addProduct(product);
++                    if (!added) {
++                      ScaffoldMessenger.of(context).showSnackBar(
++                        SnackBar(
++                          content: Text(
++                              'Only ${product.stock} "${product.name}" in stock'),
++                          duration: const Duration(seconds: 2),
++                        ),
++                      );
++                    }
++                  },
+             borderRadius: BorderRadius.circular(8),
+             child: Container(
+               decoration: BoxDecoration(

@@ -168,6 +168,17 @@ class CartSidebar extends ConsumerWidget {
     final total = ref.read(cartProvider.notifier).total;
 
     final printerIp = await DatabaseHelper.instance.getSetting('printer_ip');
+    final printerModeSetting =
+        await DatabaseHelper.instance.getSetting('printer_mode');
+    final windowsPrinterName =
+        await DatabaseHelper.instance.getSetting('windows_printer_name');
+
+    final mode = printerModeSetting == 'windows'
+        ? PrinterMode.windows
+        : PrinterMode.network;
+    final target =
+        mode == PrinterMode.windows ? (windowsPrinterName ?? '') : (printerIp ?? '');
+    final printerConfigured = target.isNotEmpty;
 
     for (final item in cartItems) {
       if (item.product.id != null) {
@@ -177,9 +188,12 @@ class CartSidebar extends ConsumerWidget {
 
     ref.read(cartProvider.notifier).clearCart();
 
-    if (printerIp != null && printerIp.isNotEmpty) {
-      PrinterService.printReceipt(
-        printerIp: printerIp,
+    // Fire-and-forget, same as before: checkout completes instantly and
+    // doesn't wait on or react to the print result.
+    if (printerConfigured) {
+      PrinterService.printReceiptAuto(
+        mode: mode,
+        target: target,
         items: cartItems,
         total: total,
       );
@@ -189,9 +203,9 @@ class CartSidebar extends ConsumerWidget {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            printerIp == null || printerIp.isEmpty
-                ? 'Sale completed (no printer set)'
-                : 'Sale completed & printing',
+            printerConfigured
+                ? 'Sale completed & printing'
+                : 'Sale completed (no printer set)',
           ),
         ),
       );
