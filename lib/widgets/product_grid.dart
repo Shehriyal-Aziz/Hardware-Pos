@@ -112,7 +112,11 @@ class _ProductGridState extends ConsumerState<ProductGrid> {
                 child: ChoiceChip(
                   label: Text(cat),
                   selected: isSelected,
-                  onSelected: (_) => setState(() => selectedCategory = cat),
+                  onSelected: (_) => setState(() {
+                    selectedCategory = cat;
+                    searchQuery = '';
+                    _searchController.clear();
+                  }),
                   selectedColor: Colors.black,
                   backgroundColor: Colors.grey[100],
                   labelStyle: TextStyle(

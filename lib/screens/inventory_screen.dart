@@ -117,7 +117,8 @@ class _InventoryPanelState extends ConsumerState<_InventoryPanel> {
         .where((p) =>
             fuzzyMatch(p.name, searchQuery) ||
             fuzzyMatch(p.category, searchQuery))
-        .toList();
+        .toList()
+      ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
 
     return Scaffold(
       appBar: AppBar(
@@ -289,6 +290,43 @@ class _InventoryPanelState extends ConsumerState<_InventoryPanel> {
                 .toList();
           }
 
+          Future<void> submit() async {
+            if (duplicateWarning != null) return;
+
+            final name = nameController.text.trim();
+            final rawCategory = categoryController.text.trim();
+            final category = rawCategory.isEmpty
+                ? ''
+                : rawCategory[0].toUpperCase() +
+                    rawCategory.substring(1).toLowerCase();
+            final price = double.tryParse(priceController.text) ?? 0;
+            final stock = int.tryParse(stockController.text) ?? 0;
+
+            if (name.isEmpty || category.isEmpty) return;
+
+            final notifier = ref.read(productProvider.notifier);
+
+            if (existing == null) {
+              await notifier.addProduct(Product(
+                name: name,
+                category: category,
+                price: price,
+                stock: stock,
+                imagePath: imagePath,
+              ));
+            } else {
+              await notifier.updateProduct(existing.copyWith(
+                name: name,
+                category: category,
+                price: price,
+                stock: stock,
+                imagePath: imagePath,
+              ));
+            }
+
+            if (context.mounted) Navigator.pop(context);
+          }
+
           return AlertDialog(
             title: Text(existing == null ? 'Add Product' : 'Edit Product'),
             content: SingleChildScrollView(
@@ -341,6 +379,7 @@ class _InventoryPanelState extends ConsumerState<_InventoryPanel> {
                         checkDuplicateName(value);
                       });
                     },
+                    onSubmitted: (_) => submit(),
                   ),
                   if (nameSuggestions.isNotEmpty)
                     Align(
@@ -370,6 +409,7 @@ class _InventoryPanelState extends ConsumerState<_InventoryPanel> {
                         checkCategory(value);
                       });
                     },
+                    onSubmitted: (_) => submit(),
                   ),
                   if (categorySuggestions.isNotEmpty)
                     Align(
@@ -395,11 +435,13 @@ class _InventoryPanelState extends ConsumerState<_InventoryPanel> {
                     controller: priceController,
                     keyboardType: TextInputType.number,
                     decoration: const InputDecoration(labelText: 'Price'),
+                    onSubmitted: (_) => submit(),
                   ),
                   TextField(
                     controller: stockController,
                     keyboardType: TextInputType.number,
                     decoration: const InputDecoration(labelText: 'Stock Quantity'),
+                    onSubmitted: (_) => submit(),
                   ),
                 ],
               ),
@@ -410,42 +452,7 @@ class _InventoryPanelState extends ConsumerState<_InventoryPanel> {
                 child: const Text('Cancel'),
               ),
               ElevatedButton(
-                onPressed: duplicateWarning != null
-                    ? null
-                    : () async {
-                        final name = nameController.text.trim();
-                        final rawCategory = categoryController.text.trim();
-                        final category = rawCategory.isEmpty
-                            ? ''
-                            : rawCategory[0].toUpperCase() +
-                                rawCategory.substring(1).toLowerCase();
-                        final price = double.tryParse(priceController.text) ?? 0;
-                        final stock = int.tryParse(stockController.text) ?? 0;
-
-                        if (name.isEmpty || category.isEmpty) return;
-
-                        final notifier = ref.read(productProvider.notifier);
-
-                        if (existing == null) {
-                          await notifier.addProduct(Product(
-                            name: name,
-                            category: category,
-                            price: price,
-                            stock: stock,
-                            imagePath: imagePath,
-                          ));
-                        } else {
-                          await notifier.updateProduct(existing.copyWith(
-                            name: name,
-                            category: category,
-                            price: price,
-                            stock: stock,
-                            imagePath: imagePath,
-                          ));
-                        }
-
-                        if (context.mounted) Navigator.pop(context);
-                      },
+                onPressed: duplicateWarning != null ? null : submit,
                 child: const Text('Save'),
               ),
             ],
