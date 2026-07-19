@@ -6,6 +6,8 @@ import '../db/database_helper.dart';
 import '../providers/product_provider.dart';
 import '../models/product.dart';
 import 'settings_screen.dart';
+import 'customers_screen.dart';
+import 'reports_screen.dart';
 import '../widgets/product_grid.dart' show fuzzyMatch;
 
 class InventoryScreen extends ConsumerStatefulWidget {
@@ -124,6 +126,26 @@ class _InventoryPanelState extends ConsumerState<_InventoryPanel> {
       appBar: AppBar(
         title: const Text('Inventory'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.bar_chart_outlined),
+            tooltip: 'Reports',
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const ReportsScreen()),
+              );
+            },
+          ),
+          IconButton(
+            icon: const Icon(Icons.menu_book_outlined),
+            tooltip: 'Customers (Udhar)',
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const CustomersScreen()),
+              );
+            },
+          ),
           IconButton(
             icon: const Icon(Icons.settings_outlined),
             tooltip: 'Settings',

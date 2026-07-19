@@ -26,7 +26,43 @@ class DatabaseHelper {
     final dbPath = await getDatabasesPath();
     final path = join(dbPath, fileName);
 
-    return await openDatabase(path, version: 1, onCreate: _createDB);
+    return await openDatabase(
+      path,
+      version: 2,
+      onCreate: _createDB,
+      onUpgrade: _upgradeDB,
+    );
+  }
+
+  Future _upgradeDB(Database db, int oldVersion, int newVersion) async {
+    if (oldVersion < 2) {
+      // Udhar (credit sale) support: customers, payments against their
+      // running balance, and tagging sales as cash or udhar.
+      await db.execute('''
+        CREATE TABLE customers (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT NOT NULL,
+          phone TEXT,
+          createdAt TEXT NOT NULL
+        )
+      ''');
+
+      await db.execute('''
+        CREATE TABLE udhar_payments (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          customerId INTEGER NOT NULL,
+          amount REAL NOT NULL,
+          createdAt TEXT NOT NULL,
+          FOREIGN KEY (customerId) REFERENCES customers (id)
+        )
+      ''');
+
+      // Existing sales default to 'cash' so historical data stays correct.
+      await db.execute(
+        "ALTER TABLE sales ADD COLUMN paymentType TEXT NOT NULL DEFAULT 'cash'",
+      );
+      await db.execute('ALTER TABLE sales ADD COLUMN customerId INTEGER');
+    }
   }
 
   Future _createDB(Database db, int version) async {
@@ -48,7 +84,10 @@ class DatabaseHelper {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         totalAmount REAL NOT NULL,
         discount REAL NOT NULL DEFAULT 0,
-        createdAt TEXT NOT NULL
+        createdAt TEXT NOT NULL,
+        paymentType TEXT NOT NULL DEFAULT 'cash',
+        customerId INTEGER,
+        FOREIGN KEY (customerId) REFERENCES customers (id)
       )
     ''');
 
@@ -62,6 +101,25 @@ class DatabaseHelper {
         priceAtSale REAL NOT NULL,
         FOREIGN KEY (saleId) REFERENCES sales (id),
         FOREIGN KEY (productId) REFERENCES products (id)
+      )
+    ''');
+
+    await db.execute('''
+      CREATE TABLE customers (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        phone TEXT,
+        createdAt TEXT NOT NULL
+      )
+    ''');
+
+    await db.execute('''
+      CREATE TABLE udhar_payments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        customerId INTEGER NOT NULL,
+        amount REAL NOT NULL,
+        createdAt TEXT NOT NULL,
+        FOREIGN KEY (customerId) REFERENCES customers (id)
       )
     ''');
 
@@ -175,6 +233,172 @@ class DatabaseHelper {
   Future<int> insertSaleItem(Map<String, dynamic> item) async {
     final db = await instance.database;
     return await db.insert('sale_items', item);
+  }
+
+  // ---------- Customers & Udhar ----------
+
+  Future<int> insertCustomer(Map<String, dynamic> customer) async {
+    final db = await instance.database;
+    return await db.insert('customers', customer);
+  }
+
+  Future<List<Map<String, dynamic>>> getAllCustomers() async {
+    final db = await instance.database;
+    return await db.query('customers', orderBy: 'name ASC');
+  }
+
+  Future<Map<String, dynamic>?> getCustomer(int id) async {
+    final db = await instance.database;
+    final result =
+        await db.query('customers', where: 'id = ?', whereArgs: [id]);
+    return result.isEmpty ? null : result.first;
+  }
+
+  Future<int> insertUdharPayment(Map<String, dynamic> payment) async {
+    final db = await instance.database;
+    return await db.insert('udhar_payments', payment);
+  }
+
+  /// Every udhar sale (debit) and every payment (credit) for a customer,
+  /// combined and sorted newest-first, so the owner can scroll through
+  /// one clear history instead of two separate lists.
+  Future<List<Map<String, dynamic>>> getCustomerLedger(int customerId) async {
+    final db = await instance.database;
+
+    final sales = await db.query(
+      'sales',
+      where: 'customerId = ? AND paymentType = ?',
+      whereArgs: [customerId, 'udhar'],
+      orderBy: 'createdAt DESC',
+    );
+    final payments = await db.query(
+      'udhar_payments',
+      where: 'customerId = ?',
+      whereArgs: [customerId],
+      orderBy: 'createdAt DESC',
+    );
+
+    final entries = [
+      for (final s in sales)
+        {
+          'type': 'sale',
+          'id': s['id'],
+          'amount': s['totalAmount'],
+          'createdAt': s['createdAt'],
+        },
+      for (final p in payments)
+        {
+          'type': 'payment',
+          'id': p['id'],
+          'amount': p['amount'],
+          'createdAt': p['createdAt'],
+        },
+    ];
+    entries.sort((a, b) =>
+        (b['createdAt'] as String).compareTo(a['createdAt'] as String));
+    return entries;
+  }
+
+  /// Total owed = sum of udhar sales - sum of payments.
+  Future<double> getCustomerBalance(int customerId) async {
+    final db = await instance.database;
+
+    final salesResult = await db.rawQuery(
+      "SELECT COALESCE(SUM(totalAmount), 0) as total FROM sales "
+      "WHERE customerId = ? AND paymentType = 'udhar'",
+      [customerId],
+    );
+    final paymentsResult = await db.rawQuery(
+      'SELECT COALESCE(SUM(amount), 0) as total FROM udhar_payments '
+      'WHERE customerId = ?',
+      [customerId],
+    );
+
+    final totalUdhar = (salesResult.first['total'] as num).toDouble();
+    final totalPaid = (paymentsResult.first['total'] as num).toDouble();
+    return totalUdhar - totalPaid;
+  }
+
+  /// Balance for every customer in one query, used by the customer list
+  /// screen so it doesn't run N queries for N customers.
+  Future<Map<int, double>> getAllCustomerBalances() async {
+    final db = await instance.database;
+
+    final salesRows = await db.rawQuery(
+      "SELECT customerId, COALESCE(SUM(totalAmount), 0) as total FROM sales "
+      "WHERE paymentType = 'udhar' AND customerId IS NOT NULL "
+      "GROUP BY customerId",
+    );
+    final paymentRows = await db.rawQuery(
+      'SELECT customerId, COALESCE(SUM(amount), 0) as total '
+      'FROM udhar_payments GROUP BY customerId',
+    );
+
+    final balances = <int, double>{};
+    for (final row in salesRows) {
+      final id = row['customerId'] as int;
+      balances[id] = (row['total'] as num).toDouble();
+    }
+    for (final row in paymentRows) {
+      final id = row['customerId'] as int;
+      balances[id] = (balances[id] ?? 0) - (row['total'] as num).toDouble();
+    }
+    return balances;
+  }
+
+  // ---------- Reports ----------
+
+  /// Sums cash sales, udhar sales, and udhar payments received within a
+  /// date range (inclusive start, exclusive end).
+  Future<Map<String, double>> getSalesSummary(
+      DateTime start, DateTime end) async {
+    final db = await instance.database;
+    final startStr = start.toIso8601String();
+    final endStr = end.toIso8601String();
+
+    final cashResult = await db.rawQuery(
+      "SELECT COALESCE(SUM(totalAmount), 0) as total, COUNT(*) as cnt "
+      "FROM sales WHERE paymentType = 'cash' "
+      "AND createdAt >= ? AND createdAt < ?",
+      [startStr, endStr],
+    );
+    final udharResult = await db.rawQuery(
+      "SELECT COALESCE(SUM(totalAmount), 0) as total, COUNT(*) as cnt "
+      "FROM sales WHERE paymentType = 'udhar' "
+      "AND createdAt >= ? AND createdAt < ?",
+      [startStr, endStr],
+    );
+    final paymentsResult = await db.rawQuery(
+      'SELECT COALESCE(SUM(amount), 0) as total FROM udhar_payments '
+      'WHERE createdAt >= ? AND createdAt < ?',
+      [startStr, endStr],
+    );
+
+    return {
+      'cashTotal': (cashResult.first['total'] as num).toDouble(),
+      'cashCount': (cashResult.first['cnt'] as num).toDouble(),
+      'udharTotal': (udharResult.first['total'] as num).toDouble(),
+      'udharCount': (udharResult.first['cnt'] as num).toDouble(),
+      'udharPaymentsReceived':
+          (paymentsResult.first['total'] as num).toDouble(),
+    };
+  }
+
+  /// Top-selling products by quantity within a date range.
+  Future<List<Map<String, dynamic>>> getTopProducts(
+      DateTime start, DateTime end,
+      {int limit = 10}) async {
+    final db = await instance.database;
+    return await db.rawQuery('''
+      SELECT si.productName as name, SUM(si.quantity) as totalQty,
+             SUM(si.quantity * si.priceAtSale) as totalRevenue
+      FROM sale_items si
+      INNER JOIN sales s ON si.saleId = s.id
+      WHERE s.createdAt >= ? AND s.createdAt < ?
+      GROUP BY si.productName
+      ORDER BY totalQty DESC
+      LIMIT ?
+    ''', [start.toIso8601String(), end.toIso8601String(), limit]);
   }
 
   Future close() async {

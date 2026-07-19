@@ -3,20 +3,46 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/cart_provider.dart';
 import '../providers/product_provider.dart';
 import '../models/cart_item.dart';
+import '../models/customer.dart';
 import '../db/database_helper.dart';
 import '../services/printer_service.dart';
+import 'customer_picker_dialog.dart';
 
-class CartSidebar extends ConsumerWidget {
+enum PaymentType { cash, udhar }
+
+class CartSidebar extends ConsumerStatefulWidget {
   const CartSidebar({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<CartSidebar> createState() => _CartSidebarState();
+}
+
+class _CartSidebarState extends ConsumerState<CartSidebar> {
+  PaymentType _paymentType = PaymentType.cash;
+  Customer? _selectedCustomer;
+
+  Future<void> _pickCustomer() async {
+    final result = await showDialog<Customer>(
+      context: context,
+      builder: (context) => const CustomerPickerDialog(),
+    );
+    if (result != null) {
+      setState(() => _selectedCustomer = result);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final cartItems = ref.watch(cartProvider);
     final cartNotifier = ref.read(cartProvider.notifier);
     final subtotal = cartNotifier.subtotal;
     final total = cartNotifier.total;
     final discountPercent =
         subtotal > 0 ? (cartNotifier.overallDiscount / subtotal * 100) : 0;
+
+    // Udhar requires a customer to be selected before checkout is allowed.
+    final canCheckout = cartItems.isNotEmpty &&
+        (_paymentType == PaymentType.cash || _selectedCustomer != null);
 
     return Container(
       width: 340,
@@ -138,11 +164,87 @@ class CartSidebar extends ConsumerWidget {
                   ],
                 ),
                 const SizedBox(height: 12),
+                // Payment type: Cash (default) or Udhar (credit sale).
+                SegmentedButton<PaymentType>(
+                  segments: const [
+                    ButtonSegment(
+                      value: PaymentType.cash,
+                      label: Text('Cash'),
+                      icon: Icon(Icons.payments_outlined),
+                    ),
+                    ButtonSegment(
+                      value: PaymentType.udhar,
+                      label: Text('Udhar'),
+                      icon: Icon(Icons.menu_book_outlined),
+                    ),
+                  ],
+                  selected: {_paymentType},
+                  onSelectionChanged: (selected) {
+                    setState(() {
+                      _paymentType = selected.first;
+                      if (_paymentType == PaymentType.cash) {
+                        _selectedCustomer = null;
+                      }
+                    });
+                  },
+                ),
+                if (_paymentType == PaymentType.udhar) ...[
+                  const SizedBox(height: 8),
+                  InkWell(
+                    onTap: _pickCustomer,
+                    borderRadius: BorderRadius.circular(8),
+                    child: Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 10),
+                      decoration: BoxDecoration(
+                        border: Border.all(
+                          color: _selectedCustomer == null
+                              ? Colors.red[300]!
+                              : Colors.black12,
+                        ),
+                        borderRadius: BorderRadius.circular(8),
+                        color: _selectedCustomer == null
+                            ? Colors.red[50]
+                            : Colors.grey[50],
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.person_outline,
+                            size: 18,
+                            color: _selectedCustomer == null
+                                ? Colors.red[700]
+                                : Colors.black54,
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              _selectedCustomer?.name ??
+                                  'Tap to select customer',
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: _selectedCustomer != null
+                                    ? FontWeight.w600
+                                    : FontWeight.normal,
+                                color: _selectedCustomer == null
+                                    ? Colors.red[700]
+                                    : Colors.black87,
+                              ),
+                            ),
+                          ),
+                          const Icon(Icons.chevron_right, size: 18),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 12),
                 SizedBox(
                   width: double.infinity,
                   height: 48,
                   child: ElevatedButton(
-                    onPressed: cartItems.isEmpty
+                    onPressed: !canCheckout
                         ? null
                         : () => _checkout(context, ref),
                     child: const Text(
@@ -165,6 +267,8 @@ class CartSidebar extends ConsumerWidget {
   Future<void> _checkout(BuildContext context, WidgetRef ref) async {
     final cartItems = ref.read(cartProvider);
     final productNotifier = ref.read(productProvider.notifier);
+    final subtotal = ref.read(cartProvider.notifier).subtotal;
+    final discount = ref.read(cartProvider.notifier).overallDiscount;
     final total = ref.read(cartProvider.notifier).total;
 
     final printerIp = await DatabaseHelper.instance.getSetting('printer_ip');
@@ -186,7 +290,34 @@ class CartSidebar extends ConsumerWidget {
       }
     }
 
+    // Persist the sale + its line items so reports and udhar ledgers have
+    // real data to work from, regardless of payment type.
+    final saleId = await DatabaseHelper.instance.insertSale({
+      'totalAmount': total,
+      'discount': subtotal - total >= 0 ? subtotal - total : discount,
+      'createdAt': DateTime.now().toIso8601String(),
+      'paymentType': _paymentType == PaymentType.udhar ? 'udhar' : 'cash',
+      'customerId':
+          _paymentType == PaymentType.udhar ? _selectedCustomer!.id : null,
+    });
+    for (final item in cartItems) {
+      await DatabaseHelper.instance.insertSaleItem({
+        'saleId': saleId,
+        'productId': item.product.id,
+        'productName': item.product.name,
+        'quantity': item.quantity,
+        'priceAtSale': item.priceOverride,
+      });
+    }
+
+    final wasUdhar = _paymentType == PaymentType.udhar;
+    final customerName = _selectedCustomer?.name;
+
     ref.read(cartProvider.notifier).clearCart();
+    setState(() {
+      _paymentType = PaymentType.cash;
+      _selectedCustomer = null;
+    });
 
     // Fire-and-forget, same as before: checkout completes instantly and
     // doesn't wait on or react to the print result.
@@ -203,9 +334,11 @@ class CartSidebar extends ConsumerWidget {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            printerConfigured
-                ? 'Sale completed & printing'
-                : 'Sale completed (no printer set)',
+            wasUdhar
+                ? 'Udhar sale recorded for $customerName'
+                : (printerConfigured
+                    ? 'Sale completed & printing'
+                    : 'Sale completed (no printer set)'),
           ),
         ),
       );

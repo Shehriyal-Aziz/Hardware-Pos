@@ -1,0 +1,275 @@
+import 'package:flutter/material.dart';
+import '../db/database_helper.dart';
+import '../models/customer.dart';
+
+class CustomerDetailScreen extends StatefulWidget {
+  final Customer customer;
+  const CustomerDetailScreen({super.key, required this.customer});
+
+  @override
+  State<CustomerDetailScreen> createState() => _CustomerDetailScreenState();
+}
+
+class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
+  double _balance = 0;
+  List<Map<String, dynamic>> _ledger = [];
+  // saleId -> its line items, loaded lazily when a sale entry is expanded.
+  final Map<int, List<Map<String, dynamic>>> _saleItemsCache = {};
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() => _loading = true);
+    final balance =
+        await DatabaseHelper.instance.getCustomerBalance(widget.customer.id!);
+    final ledger =
+        await DatabaseHelper.instance.getCustomerLedger(widget.customer.id!);
+    if (!mounted) return;
+    setState(() {
+      _balance = balance;
+      _ledger = ledger;
+      _loading = false;
+    });
+  }
+
+  Future<List<Map<String, dynamic>>> _loadSaleItems(int saleId) async {
+    if (_saleItemsCache.containsKey(saleId)) {
+      return _saleItemsCache[saleId]!;
+    }
+    final db = await DatabaseHelper.instance.database;
+    final items = await db.query(
+      'sale_items',
+      where: 'saleId = ?',
+      whereArgs: [saleId],
+    );
+    _saleItemsCache[saleId] = items;
+    return items;
+  }
+
+  Future<void> _recordPayment() async {
+    final amountController = TextEditingController();
+    final result = await showDialog<double>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Record Payment - ${widget.customer.name}'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'Current balance: Rs ${_balance.toStringAsFixed(0)}',
+              style: const TextStyle(color: Colors.black54),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: amountController,
+              autofocus: true,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                labelText: 'Amount Received',
+                prefixText: 'Rs ',
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final amount = double.tryParse(amountController.text);
+              if (amount != null && amount > 0) {
+                Navigator.pop(context, amount);
+              }
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+
+    if (result != null) {
+      await DatabaseHelper.instance.insertUdharPayment({
+        'customerId': widget.customer.id,
+        'amount': result,
+        'createdAt': DateTime.now().toIso8601String(),
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Payment of Rs ${result.toStringAsFixed(0)} recorded')),
+        );
+      }
+      _load();
+    }
+  }
+
+  String _formatDate(String iso) {
+    final dt = DateTime.parse(iso);
+    return '${dt.day}/${dt.month}/${dt.year}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text(widget.customer.name)),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(20),
+                  color: _balance > 0 ? Colors.red[50] : Colors.green[50],
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _balance > 0 ? 'Outstanding Balance' : 'All Clear',
+                        style: const TextStyle(
+                            fontSize: 13, color: Colors.black54),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Rs ${_balance.toStringAsFixed(0)}',
+                        style: TextStyle(
+                          fontSize: 32,
+                          fontWeight: FontWeight.bold,
+                          color: _balance > 0
+                              ? Colors.red[700]
+                              : Colors.green[700],
+                        ),
+                      ),
+                      if (widget.customer.phone != null) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          widget.customer.phone!,
+                          style: const TextStyle(color: Colors.black54),
+                        ),
+                      ],
+                      const SizedBox(height: 12),
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton.icon(
+                          onPressed: _recordPayment,
+                          icon: const Icon(Icons.check_circle_outline),
+                          label: const Text('Record Payment'),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
+                  child: Text(
+                    'History',
+                    style: TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                ),
+                Expanded(
+                  child: _ledger.isEmpty
+                      ? const Center(child: Text('No udhar history yet'))
+                      : ListView.builder(
+                          itemCount: _ledger.length,
+                          itemBuilder: (context, index) {
+                            final entry = _ledger[index];
+                            final isSale = entry['type'] == 'sale';
+                            final amount = (entry['amount'] as num).toDouble();
+
+                            if (!isSale) {
+                              return ListTile(
+                                leading: CircleAvatar(
+                                  backgroundColor: Colors.green[100],
+                                  child: Icon(Icons.arrow_downward,
+                                      color: Colors.green[700], size: 18),
+                                ),
+                                title: const Text('Payment received'),
+                                subtitle:
+                                    Text(_formatDate(entry['createdAt'])),
+                                trailing: Text(
+                                  '- Rs ${amount.toStringAsFixed(0)}',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.green[700],
+                                  ),
+                                ),
+                              );
+                            }
+
+                            return ExpansionTile(
+                              leading: CircleAvatar(
+                                backgroundColor: Colors.red[100],
+                                child: Icon(Icons.arrow_upward,
+                                    color: Colors.red[700], size: 18),
+                              ),
+                              title: const Text('Udhar sale'),
+                              subtitle: Text(_formatDate(entry['createdAt'])),
+                              trailing: Text(
+                                '+ Rs ${amount.toStringAsFixed(0)}',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.red[700],
+                                ),
+                              ),
+                              children: [
+                                FutureBuilder<List<Map<String, dynamic>>>(
+                                  future: _loadSaleItems(entry['id'] as int),
+                                  builder: (context, snapshot) {
+                                    if (!snapshot.hasData) {
+                                      return const Padding(
+                                        padding: EdgeInsets.all(12),
+                                        child: LinearProgressIndicator(),
+                                      );
+                                    }
+                                    final items = snapshot.data!;
+                                    return Column(
+                                      children: items.map((item) {
+                                        final qty = item['quantity'] as int;
+                                        final price =
+                                            (item['priceAtSale'] as num)
+                                                .toDouble();
+                                        return Padding(
+                                          padding: const EdgeInsets.symmetric(
+                                              horizontal: 20, vertical: 4),
+                                          child: Row(
+                                            mainAxisAlignment:
+                                                MainAxisAlignment
+                                                    .spaceBetween,
+                                            children: [
+                                              Expanded(
+                                                child: Text(
+                                                  '${item['productName']} x$qty',
+                                                  style: const TextStyle(
+                                                      fontSize: 13),
+                                                ),
+                                              ),
+                                              Text(
+                                                'Rs ${(price * qty).toStringAsFixed(0)}',
+                                                style: const TextStyle(
+                                                    fontSize: 13),
+                                              ),
+                                            ],
+                                          ),
+                                        );
+                                      }).toList(),
+                                    );
+                                  },
+                                ),
+                                const SizedBox(height: 8),
+                              ],
+                            );
+                          },
+                        ),
+                ),
+              ],
+            ),
+    );
+  }
+}
