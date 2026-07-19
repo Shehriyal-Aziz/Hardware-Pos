@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../db/database_helper.dart';
 import '../models/customer.dart';
+import '../services/export_service.dart';
 
 class CustomerDetailScreen extends StatefulWidget {
   final Customer customer;
@@ -16,6 +17,7 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
   // saleId -> its line items, loaded lazily when a sale entry is expanded.
   final Map<int, List<Map<String, dynamic>>> _saleItemsCache = {};
   bool _loading = true;
+  bool _exporting = false;
 
   @override
   void initState() {
@@ -49,6 +51,31 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
     );
     _saleItemsCache[saleId] = items;
     return items;
+  }
+
+  /// Export needs every sale's items up front (not just whichever the user
+  /// has expanded), so this fills the cache for every sale entry first.
+  Future<void> _preloadAllSaleItems() async {
+    for (final entry in _ledger) {
+      if (entry['type'] == 'sale') {
+        await _loadSaleItems(entry['id'] as int);
+      }
+    }
+  }
+
+  Future<void> _export(Future<void> Function() exportFn) async {
+    setState(() => _exporting = true);
+    try {
+      await _preloadAllSaleItems();
+      await exportFn();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Export failed: $e')));
+      }
+    } finally {
+      if (mounted) setState(() => _exporting = false);
+    }
   }
 
   Future<void> _recordPayment() async {
@@ -118,7 +145,50 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text(widget.customer.name)),
+      appBar: AppBar(
+        title: Text(widget.customer.name),
+        actions: [
+          if (_exporting)
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 16),
+              child: Center(
+                child: SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              ),
+            )
+          else if (!_loading && _ledger.isNotEmpty)
+            PopupMenuButton<String>(
+              icon: const Icon(Icons.share_outlined),
+              tooltip: 'Export Statement',
+              onSelected: (value) {
+                if (value == 'pdf') {
+                  _export(() => ExportService.exportLedgerPdf(
+                        customerName: widget.customer.name,
+                        customerPhone: widget.customer.phone,
+                        balance: _balance,
+                        ledger: _ledger,
+                        saleItemsBySaleId: _saleItemsCache,
+                      ));
+                } else {
+                  _export(() => ExportService.exportLedgerExcel(
+                        customerName: widget.customer.name,
+                        customerPhone: widget.customer.phone,
+                        balance: _balance,
+                        ledger: _ledger,
+                        saleItemsBySaleId: _saleItemsCache,
+                      ));
+                }
+              },
+              itemBuilder: (context) => const [
+                PopupMenuItem(value: 'pdf', child: Text('Export as PDF')),
+                PopupMenuItem(value: 'excel', child: Text('Export as Excel')),
+              ],
+            ),
+        ],
+      ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : Column(

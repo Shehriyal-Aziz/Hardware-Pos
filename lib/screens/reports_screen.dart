@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../db/database_helper.dart';
+import '../services/export_service.dart';
 
 enum ReportRange { today, thisWeek, thisMonth, custom }
 
@@ -18,6 +19,34 @@ class _ReportsScreenState extends State<ReportsScreen> {
   Map<String, double>? _summary;
   List<Map<String, dynamic>> _topProducts = [];
   bool _loading = true;
+  bool _exporting = false;
+
+  String get _rangeLabel {
+    switch (_range) {
+      case ReportRange.today:
+        return 'Today';
+      case ReportRange.thisWeek:
+        return 'This Week';
+      case ReportRange.thisMonth:
+        return 'This Month';
+      case ReportRange.custom:
+        return '${_customStart.day}-${_customStart.month}-${_customStart.year}_to_${_customEnd.day}-${_customEnd.month}-${_customEnd.year}';
+    }
+  }
+
+  Future<void> _export(Future<void> Function() exportFn) async {
+    setState(() => _exporting = true);
+    try {
+      await exportFn();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Export failed: $e')));
+      }
+    } finally {
+      if (mounted) setState(() => _exporting = false);
+    }
+  }
 
   @override
   void initState() {
@@ -99,7 +128,46 @@ class _ReportsScreenState extends State<ReportsScreen> {
         summary['cashCount']!.toInt() + summary['udharCount']!.toInt();
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Reports')),
+      appBar: AppBar(
+        title: const Text('Reports'),
+        actions: [
+          if (_exporting)
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 16),
+              child: Center(
+                child: SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              ),
+            )
+          else ...[
+            IconButton(
+              icon: const Icon(Icons.picture_as_pdf_outlined),
+              tooltip: 'Export PDF',
+              onPressed: _loading
+                  ? null
+                  : () => _export(() => ExportService.exportReportPdf(
+                        rangeLabel: _rangeLabel,
+                        summary: summary,
+                        topProducts: _topProducts,
+                      )),
+            ),
+            IconButton(
+              icon: const Icon(Icons.grid_on_outlined),
+              tooltip: 'Export Excel',
+              onPressed: _loading
+                  ? null
+                  : () => _export(() => ExportService.exportReportExcel(
+                        rangeLabel: _rangeLabel,
+                        summary: summary,
+                        topProducts: _topProducts,
+                      )),
+            ),
+          ],
+        ],
+      ),
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [

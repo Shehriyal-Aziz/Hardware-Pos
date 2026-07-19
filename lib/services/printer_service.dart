@@ -1,6 +1,6 @@
 import 'dart:typed_data';
-import 'package:esc_pos_printer/esc_pos_printer.dart';
-import 'package:esc_pos_utils/esc_pos_utils.dart';
+import 'package:esc_pos_printer_plus/esc_pos_printer_plus.dart';
+import 'package:esc_pos_utils_plus/esc_pos_utils_plus.dart';
 import 'package:windows_printer/windows_printer.dart';
 import '../models/cart_item.dart';
 
@@ -26,7 +26,12 @@ class PrinterService {
 
     bytes += generator.text(
       storeName,
-      styles: const PosStyles(align: PosAlign.center, bold: true, height: PosTextSize.size2, width: PosTextSize.size2),
+      styles: const PosStyles(
+        align: PosAlign.center,
+        bold: true,
+        height: PosTextSize.size2,
+        width: PosTextSize.size2,
+      ),
     );
     bytes += generator.text(
       DateTime.now().toString().substring(0, 16),
@@ -48,11 +53,19 @@ class PrinterService {
 
     bytes += generator.hr();
     bytes += generator.row([
-      PosColumn(text: 'TOTAL', width: 6, styles: const PosStyles(bold: true, height: PosTextSize.size2)),
+      PosColumn(
+        text: 'TOTAL',
+        width: 6,
+        styles: const PosStyles(bold: true, height: PosTextSize.size2),
+      ),
       PosColumn(
         text: 'Rs ${total.toStringAsFixed(0)}',
         width: 6,
-        styles: const PosStyles(align: PosAlign.right, bold: true, height: PosTextSize.size2),
+        styles: const PosStyles(
+          align: PosAlign.right,
+          bold: true,
+          height: PosTextSize.size2,
+        ),
       ),
     ]);
 
@@ -78,8 +91,10 @@ class PrinterService {
     final profile = await CapabilityProfile.load();
     final printer = NetworkPrinter(PaperSize.mm58, profile);
 
-    final PosPrintResult connectResult =
-        await printer.connect(printerIp, port: 9100);
+    final PosPrintResult connectResult = await printer.connect(
+      printerIp,
+      port: 9100,
+    );
 
     if (connectResult != PosPrintResult.success) {
       return connectResult;
@@ -137,7 +152,8 @@ class PrinterService {
   /// old network-only version behaved (fire-and-forget from checkout).
   static Future<bool> printReceiptAuto({
     required PrinterMode mode,
-    required String target, // IP for network mode, printer name for windows mode
+    required String
+    target, // IP for network mode, printer name for windows mode
     required List<CartItem> items,
     required double total,
     String storeName = 'Hardware Store',
