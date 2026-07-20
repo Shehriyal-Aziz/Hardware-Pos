@@ -1,7 +1,7 @@
 [Setup]
 AppName=Hardware POS
 AppVersion=1.0
-DefaultDirName={autopf}\HardwarePOS
+DefaultDirName={localappdata}\HardwarePOS
 DefaultGroupName=Hardware POS
 OutputDir=installer_output
 OutputBaseFilename=HardwarePOS_Setup
