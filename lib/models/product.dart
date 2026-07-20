@@ -1,5 +1,5 @@
 class Product {
-  final int? id;
+  final String? id;
   final String name;
   final String category;
   final double price;
@@ -19,6 +19,9 @@ class Product {
     DateTime? updatedAt,
   }) : updatedAt = updatedAt ?? DateTime.now();
 
+  // NOTE: map keys are lowercase to match the Supabase/PowerSync schema
+  // (Postgres lowercases unquoted identifiers). Dart-side field names stay
+  // camelCase; only the DB column mapping changed.
   Map<String, dynamic> toMap() {
     return {
       'id': id,
@@ -27,26 +30,26 @@ class Product {
       'price': price,
       'stock': stock,
       'barcode': barcode,
-      'imagePath': imagePath,
-      'updatedAt': updatedAt.toIso8601String(),
+      'imagepath': imagePath,
+      'updatedat': updatedAt.toIso8601String(),
     };
   }
 
   factory Product.fromMap(Map<String, dynamic> map) {
     return Product(
-      id: map['id'] as int?,
+      id: map['id'] as String?,
       name: map['name'] as String,
       category: map['category'] as String,
       price: (map['price'] as num).toDouble(),
       stock: map['stock'] as int,
       barcode: map['barcode'] as String?,
-      imagePath: map['imagePath'] as String?,
-      updatedAt: DateTime.parse(map['updatedAt'] as String),
+      imagePath: map['imagepath'] as String?,
+      updatedAt: DateTime.parse(map['updatedat'] as String),
     );
   }
 
   Product copyWith({
-    int? id,
+    String? id,
     String? name,
     String? category,
     double? price,

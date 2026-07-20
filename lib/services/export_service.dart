@@ -191,7 +191,7 @@ class ExportService {
     String? customerPhone,
     required double balance,
     required List<Map<String, dynamic>> ledger,
-    required Map<int, List<Map<String, dynamic>>> saleItemsBySaleId,
+    required Map<String, List<Map<String, dynamic>>> saleItemsBySaleId,
     String storeName = 'Hardware Store',
   }) async {
     final doc = pw.Document();
@@ -241,7 +241,7 @@ class ExportService {
                   _cell(entry['type'] == 'sale' ? 'Udhar Sale' : 'Payment'),
                   _cell(entry['type'] == 'sale'
                       ? _itemsSummary(
-                          saleItemsBySaleId[entry['id'] as int] ?? [])
+                          saleItemsBySaleId[entry['id'] as String] ?? [])
                       : '-'),
                   _cell(
                     '${entry['type'] == 'sale' ? '+' : '-'} Rs '
@@ -270,7 +270,7 @@ class ExportService {
   static String _itemsSummary(List<Map<String, dynamic>> items) {
     if (items.isEmpty) return '-';
     return items
-        .map((i) => '${i['productName']} x${i['quantity']}')
+        .map((i) => '${i['productname']} x${i['quantity']}')
         .join(', ');
   }
 
@@ -279,7 +279,7 @@ class ExportService {
     String? customerPhone,
     required double balance,
     required List<Map<String, dynamic>> ledger,
-    required Map<int, List<Map<String, dynamic>>> saleItemsBySaleId,
+    required Map<String, List<Map<String, dynamic>>> saleItemsBySaleId,
   }) async {
     final bytes = await _buildLedgerPdf(
       customerName: customerName,
@@ -297,7 +297,7 @@ class ExportService {
     String? customerPhone,
     required double balance,
     required List<Map<String, dynamic>> ledger,
-    required Map<int, List<Map<String, dynamic>>> saleItemsBySaleId,
+    required Map<String, List<Map<String, dynamic>>> saleItemsBySaleId,
   }) async {
     final excel = xl.Excel.createExcel();
     final sheet = excel['Ledger'];
@@ -324,7 +324,7 @@ class ExportService {
         xl.TextCellValue(_formatDate(entry['createdAt'] as String)),
         xl.TextCellValue(isSale ? 'Udhar Sale' : 'Payment'),
         xl.TextCellValue(isSale
-            ? _itemsSummary(saleItemsBySaleId[entry['id'] as int] ?? [])
+            ? _itemsSummary(saleItemsBySaleId[entry['id'] as String] ?? [])
             : '-'),
         xl.DoubleCellValue((entry['amount'] as num).toDouble() *
             (isSale ? 1 : -1)),

@@ -292,21 +292,22 @@ class _CartSidebarState extends ConsumerState<CartSidebar> {
 
     // Persist the sale + its line items so reports and udhar ledgers have
     // real data to work from, regardless of payment type.
+    // NOTE: map keys are lowercase to match the Supabase/PowerSync schema.
     final saleId = await DatabaseHelper.instance.insertSale({
-      'totalAmount': total,
+      'totalamount': total,
       'discount': subtotal - total >= 0 ? subtotal - total : discount,
-      'createdAt': DateTime.now().toIso8601String(),
-      'paymentType': _paymentType == PaymentType.udhar ? 'udhar' : 'cash',
-      'customerId':
+      'createdat': DateTime.now().toIso8601String(),
+      'paymenttype': _paymentType == PaymentType.udhar ? 'udhar' : 'cash',
+      'customerid':
           _paymentType == PaymentType.udhar ? _selectedCustomer!.id : null,
     });
     for (final item in cartItems) {
       await DatabaseHelper.instance.insertSaleItem({
-        'saleId': saleId,
-        'productId': item.product.id,
-        'productName': item.product.name,
+        'saleid': saleId,
+        'productid': item.product.id,
+        'productname': item.product.name,
         'quantity': item.quantity,
-        'priceAtSale': item.priceOverride,
+        'priceatsale': item.priceOverride,
       });
     }
 

@@ -15,7 +15,7 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
   double _balance = 0;
   List<Map<String, dynamic>> _ledger = [];
   // saleId -> its line items, loaded lazily when a sale entry is expanded.
-  final Map<int, List<Map<String, dynamic>>> _saleItemsCache = {};
+  final Map<String, List<Map<String, dynamic>>> _saleItemsCache = {};
   bool _loading = true;
   bool _exporting = false;
 
@@ -39,14 +39,14 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
     });
   }
 
-  Future<List<Map<String, dynamic>>> _loadSaleItems(int saleId) async {
+  Future<List<Map<String, dynamic>>> _loadSaleItems(String saleId) async {
     if (_saleItemsCache.containsKey(saleId)) {
       return _saleItemsCache[saleId]!;
     }
     final db = await DatabaseHelper.instance.database;
     final items = await db.query(
       'sale_items',
-      where: 'saleId = ?',
+      where: 'saleid = ?',
       whereArgs: [saleId],
     );
     _saleItemsCache[saleId] = items;
@@ -58,7 +58,7 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
   Future<void> _preloadAllSaleItems() async {
     for (final entry in _ledger) {
       if (entry['type'] == 'sale') {
-        await _loadSaleItems(entry['id'] as int);
+        await _loadSaleItems(entry['id'] as String);
       }
     }
   }
@@ -123,10 +123,11 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
     );
 
     if (result != null) {
+      // NOTE: map keys are lowercase to match the Supabase/PowerSync schema.
       await DatabaseHelper.instance.insertUdharPayment({
-        'customerId': widget.customer.id,
+        'customerid': widget.customer.id,
         'amount': result,
-        'createdAt': DateTime.now().toIso8601String(),
+        'createdat': DateTime.now().toIso8601String(),
       });
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -290,7 +291,7 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
                               ),
                               children: [
                                 FutureBuilder<List<Map<String, dynamic>>>(
-                                  future: _loadSaleItems(entry['id'] as int),
+                                  future: _loadSaleItems(entry['id'] as String),
                                   builder: (context, snapshot) {
                                     if (!snapshot.hasData) {
                                       return const Padding(
@@ -303,7 +304,7 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
                                       children: items.map((item) {
                                         final qty = item['quantity'] as int;
                                         final price =
-                                            (item['priceAtSale'] as num)
+                                            (item['priceatsale'] as num)
                                                 .toDouble();
                                         return Padding(
                                           padding: const EdgeInsets.symmetric(
@@ -315,7 +316,7 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
                                             children: [
                                               Expanded(
                                                 child: Text(
-                                                  '${item['productName']} x$qty',
+                                                  '${item['productname']} x$qty',
                                                   style: const TextStyle(
                                                       fontSize: 13),
                                                 ),

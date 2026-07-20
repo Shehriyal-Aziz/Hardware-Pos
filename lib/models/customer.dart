@@ -1,5 +1,5 @@
 class Customer {
-  final int? id;
+  final String? id;
   final String name;
   final String? phone;
   final DateTime createdAt;
@@ -16,16 +16,16 @@ class Customer {
       'id': id,
       'name': name,
       'phone': phone,
-      'createdAt': createdAt.toIso8601String(),
+      'createdat': createdAt.toIso8601String(),
     };
   }
 
   factory Customer.fromMap(Map<String, dynamic> map) {
     return Customer(
-      id: map['id'] as int?,
+      id: map['id'] as String?,
       name: map['name'] as String,
       phone: map['phone'] as String?,
-      createdAt: DateTime.parse(map['createdAt'] as String),
+      createdAt: DateTime.parse(map['createdat'] as String),
     );
   }
 }

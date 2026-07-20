@@ -12,7 +12,7 @@ class CustomersScreen extends StatefulWidget {
 
 class _CustomersScreenState extends State<CustomersScreen> {
   List<Customer> _customers = [];
-  Map<int, double> _balances = {};
+  Map<String, double> _balances = {};
   bool _loading = true;
   String _searchQuery = '';
 

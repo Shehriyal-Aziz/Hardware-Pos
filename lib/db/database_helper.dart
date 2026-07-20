@@ -4,10 +4,12 @@ import 'package:path/path.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:uuid/uuid.dart';
 
 class DatabaseHelper {
   static final DatabaseHelper instance = DatabaseHelper._init();
   static Database? _database;
+  static const _uuid = Uuid();
 
   DatabaseHelper._init();
 
@@ -35,61 +37,65 @@ class DatabaseHelper {
     return db;
   }
 
+  // NOTE: all tables now use TEXT (UUID) primary keys instead of
+  // INTEGER AUTOINCREMENT, and all column names are lowercase — both to
+  // match the Supabase/PowerSync schema (Postgres lowercases unquoted
+  // identifiers) so the future PowerSync migration is a drop-in swap.
   Future _createDB(Database db, int version) async {
     await db.execute('''
       CREATE TABLE products (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
         category TEXT NOT NULL,
         price REAL NOT NULL,
         stock INTEGER NOT NULL,
         barcode TEXT,
-        imagePath TEXT,
-        updatedAt TEXT NOT NULL
+        imagepath TEXT,
+        updatedat TEXT NOT NULL
       )
     ''');
 
     await db.execute('''
       CREATE TABLE sales (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        totalAmount REAL NOT NULL,
+        id TEXT PRIMARY KEY,
+        totalamount REAL NOT NULL,
         discount REAL NOT NULL DEFAULT 0,
-        createdAt TEXT NOT NULL,
-        paymentType TEXT NOT NULL DEFAULT 'cash',
-        customerId INTEGER,
-        FOREIGN KEY (customerId) REFERENCES customers (id)
+        createdat TEXT NOT NULL,
+        paymenttype TEXT NOT NULL DEFAULT 'cash',
+        customerid TEXT,
+        FOREIGN KEY (customerid) REFERENCES customers (id)
       )
     ''');
 
     await db.execute('''
       CREATE TABLE sale_items (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        saleId INTEGER NOT NULL,
-        productId INTEGER NOT NULL,
-        productName TEXT NOT NULL,
+        id TEXT PRIMARY KEY,
+        saleid TEXT NOT NULL,
+        productid TEXT NOT NULL,
+        productname TEXT NOT NULL,
         quantity INTEGER NOT NULL,
-        priceAtSale REAL NOT NULL,
-        FOREIGN KEY (saleId) REFERENCES sales (id),
-        FOREIGN KEY (productId) REFERENCES products (id)
+        priceatsale REAL NOT NULL,
+        FOREIGN KEY (saleid) REFERENCES sales (id),
+        FOREIGN KEY (productid) REFERENCES products (id)
       )
     ''');
 
     await db.execute('''
       CREATE TABLE customers (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
         phone TEXT,
-        createdAt TEXT NOT NULL
+        createdat TEXT NOT NULL
       )
     ''');
 
     await db.execute('''
       CREATE TABLE udhar_payments (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        customerId INTEGER NOT NULL,
+        id TEXT PRIMARY KEY,
+        customerid TEXT NOT NULL,
         amount REAL NOT NULL,
-        createdAt TEXT NOT NULL,
-        FOREIGN KEY (customerId) REFERENCES customers (id)
+        createdat TEXT NOT NULL,
+        FOREIGN KEY (customerid) REFERENCES customers (id)
       )
     ''');
 
@@ -115,50 +121,50 @@ class DatabaseHelper {
     final expectedTables = <String, String>{
       'products': '''
         CREATE TABLE products (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          id TEXT PRIMARY KEY,
           name TEXT NOT NULL,
           category TEXT NOT NULL,
           price REAL NOT NULL,
           stock INTEGER NOT NULL,
           barcode TEXT,
-          imagePath TEXT,
-          updatedAt TEXT NOT NULL
+          imagepath TEXT,
+          updatedat TEXT NOT NULL
         )
       ''',
       'sales': '''
         CREATE TABLE sales (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          totalAmount REAL NOT NULL,
+          id TEXT PRIMARY KEY,
+          totalamount REAL NOT NULL,
           discount REAL NOT NULL DEFAULT 0,
-          createdAt TEXT NOT NULL,
-          paymentType TEXT NOT NULL DEFAULT 'cash',
-          customerId INTEGER
+          createdat TEXT NOT NULL,
+          paymenttype TEXT NOT NULL DEFAULT 'cash',
+          customerid TEXT
         )
       ''',
       'sale_items': '''
         CREATE TABLE sale_items (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          saleId INTEGER NOT NULL,
-          productId INTEGER NOT NULL,
-          productName TEXT NOT NULL,
+          id TEXT PRIMARY KEY,
+          saleid TEXT NOT NULL,
+          productid TEXT NOT NULL,
+          productname TEXT NOT NULL,
           quantity INTEGER NOT NULL,
-          priceAtSale REAL NOT NULL
+          priceatsale REAL NOT NULL
         )
       ''',
       'customers': '''
         CREATE TABLE customers (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          id TEXT PRIMARY KEY,
           name TEXT NOT NULL,
           phone TEXT,
-          createdAt TEXT NOT NULL
+          createdat TEXT NOT NULL
         )
       ''',
       'udhar_payments': '''
         CREATE TABLE udhar_payments (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          customerId INTEGER NOT NULL,
+          id TEXT PRIMARY KEY,
+          customerid TEXT NOT NULL,
           amount REAL NOT NULL,
-          createdAt TEXT NOT NULL
+          createdat TEXT NOT NULL
         )
       ''',
       'settings': '''
@@ -172,11 +178,11 @@ class DatabaseHelper {
     // columns beyond each table's minimal CREATE above, keyed by table.
     final expectedColumns = <String, Map<String, String>>{
       'products': {
-        'imagePath': 'TEXT',
+        'imagepath': 'TEXT',
       },
       'sales': {
-        'paymentType': "TEXT NOT NULL DEFAULT 'cash'",
-        'customerId': 'INTEGER',
+        'paymenttype': "TEXT NOT NULL DEFAULT 'cash'",
+        'customerid': 'TEXT',
       },
     };
 
@@ -219,9 +225,12 @@ class DatabaseHelper {
     }
   }
 
-  Future<int> insertProduct(Map<String, dynamic> product) async {
+  Future<String> insertProduct(Map<String, dynamic> product) async {
     final db = await instance.database;
-    return await db.insert('products', product);
+    final id = (product['id'] as String?) ?? _uuid.v4();
+    final data = {...product, 'id': id};
+    await db.insert('products', data);
+    return id;
   }
 
   Future<List<Map<String, dynamic>>> getAllProducts() async {
@@ -282,49 +291,59 @@ class DatabaseHelper {
       final name =
           '${adjectives[i % adjectives.length]} ${items[i % items.length]} ${i + 1}';
       batch.insert('products', {
+        'id': _uuid.v4(),
         'name': name,
         'category': categories[i % categories.length],
         'price': (100 + (i * 37) % 5000).toDouble(),
         'stock': (i * 3) % 60,
         'barcode': null,
-        'imagePath': null,
-        'updatedAt': DateTime.now().toIso8601String(),
+        'imagepath': null,
+        'updatedat': DateTime.now().toIso8601String(),
       });
     }
     await batch.commit(noResult: true);
   }
   // remove till here
 
-  Future<int> updateStock(int productId, int newStock) async {
+  Future<int> updateStock(String productId, int newStock) async {
     final db = await instance.database;
     return await db.update(
       'products',
-      {'stock': newStock, 'updatedAt': DateTime.now().toIso8601String()},
+      {'stock': newStock, 'updatedat': DateTime.now().toIso8601String()},
       where: 'id = ?',
       whereArgs: [productId],
     );
   }
 
-  Future<int> deleteProduct(int id) async {
+  Future<int> deleteProduct(String id) async {
     final db = await instance.database;
     return await db.delete('products', where: 'id = ?', whereArgs: [id]);
   }
 
-  Future<int> insertSale(Map<String, dynamic> sale) async {
+  Future<String> insertSale(Map<String, dynamic> sale) async {
     final db = await instance.database;
-    return await db.insert('sales', sale);
+    final id = (sale['id'] as String?) ?? _uuid.v4();
+    final data = {...sale, 'id': id};
+    await db.insert('sales', data);
+    return id;
   }
 
-  Future<int> insertSaleItem(Map<String, dynamic> item) async {
+  Future<String> insertSaleItem(Map<String, dynamic> item) async {
     final db = await instance.database;
-    return await db.insert('sale_items', item);
+    final id = (item['id'] as String?) ?? _uuid.v4();
+    final data = {...item, 'id': id};
+    await db.insert('sale_items', data);
+    return id;
   }
 
   // ---------- Customers & Udhar ----------
 
-  Future<int> insertCustomer(Map<String, dynamic> customer) async {
+  Future<String> insertCustomer(Map<String, dynamic> customer) async {
     final db = await instance.database;
-    return await db.insert('customers', customer);
+    final id = (customer['id'] as String?) ?? _uuid.v4();
+    final data = {...customer, 'id': id};
+    await db.insert('customers', data);
+    return id;
   }
 
   Future<List<Map<String, dynamic>>> getAllCustomers() async {
@@ -332,32 +351,36 @@ class DatabaseHelper {
     return await db.query('customers', orderBy: 'name ASC');
   }
 
-  Future<Map<String, dynamic>?> getCustomer(int id) async {
+  Future<Map<String, dynamic>?> getCustomer(String id) async {
     final db = await instance.database;
     final result =
         await db.query('customers', where: 'id = ?', whereArgs: [id]);
     return result.isEmpty ? null : result.first;
   }
 
-  Future<int> insertUdharPayment(Map<String, dynamic> payment) async {
+  Future<String> insertUdharPayment(Map<String, dynamic> payment) async {
     final db = await instance.database;
-    return await db.insert('udhar_payments', payment);
+    final id = (payment['id'] as String?) ?? _uuid.v4();
+    final data = {...payment, 'id': id};
+    await db.insert('udhar_payments', data);
+    return id;
   }
 
-  Future<List<Map<String, dynamic>>> getCustomerLedger(int customerId) async {
+  Future<List<Map<String, dynamic>>> getCustomerLedger(
+      String customerId) async {
     final db = await instance.database;
 
     final sales = await db.query(
       'sales',
-      where: 'customerId = ? AND paymentType = ?',
+      where: 'customerid = ? AND paymenttype = ?',
       whereArgs: [customerId, 'udhar'],
-      orderBy: 'createdAt DESC',
+      orderBy: 'createdat DESC',
     );
     final payments = await db.query(
       'udhar_payments',
-      where: 'customerId = ?',
+      where: 'customerid = ?',
       whereArgs: [customerId],
-      orderBy: 'createdAt DESC',
+      orderBy: 'createdat DESC',
     );
 
     final entries = [
@@ -365,15 +388,15 @@ class DatabaseHelper {
         {
           'type': 'sale',
           'id': s['id'],
-          'amount': s['totalAmount'],
-          'createdAt': s['createdAt'],
+          'amount': s['totalamount'],
+          'createdAt': s['createdat'],
         },
       for (final p in payments)
         {
           'type': 'payment',
           'id': p['id'],
           'amount': p['amount'],
-          'createdAt': p['createdAt'],
+          'createdAt': p['createdat'],
         },
     ];
     entries.sort((a, b) =>
@@ -381,17 +404,17 @@ class DatabaseHelper {
     return entries;
   }
 
-  Future<double> getCustomerBalance(int customerId) async {
+  Future<double> getCustomerBalance(String customerId) async {
     final db = await instance.database;
 
     final salesResult = await db.rawQuery(
-      "SELECT COALESCE(SUM(totalAmount), 0) as total FROM sales "
-      "WHERE customerId = ? AND paymentType = 'udhar'",
+      "SELECT COALESCE(SUM(totalamount), 0) as total FROM sales "
+      "WHERE customerid = ? AND paymenttype = 'udhar'",
       [customerId],
     );
     final paymentsResult = await db.rawQuery(
       'SELECT COALESCE(SUM(amount), 0) as total FROM udhar_payments '
-      'WHERE customerId = ?',
+      'WHERE customerid = ?',
       [customerId],
     );
 
@@ -400,26 +423,26 @@ class DatabaseHelper {
     return totalUdhar - totalPaid;
   }
 
-  Future<Map<int, double>> getAllCustomerBalances() async {
+  Future<Map<String, double>> getAllCustomerBalances() async {
     final db = await instance.database;
 
     final salesRows = await db.rawQuery(
-      "SELECT customerId, COALESCE(SUM(totalAmount), 0) as total FROM sales "
-      "WHERE paymentType = 'udhar' AND customerId IS NOT NULL "
-      "GROUP BY customerId",
+      "SELECT customerid, COALESCE(SUM(totalamount), 0) as total FROM sales "
+      "WHERE paymenttype = 'udhar' AND customerid IS NOT NULL "
+      "GROUP BY customerid",
     );
     final paymentRows = await db.rawQuery(
-      'SELECT customerId, COALESCE(SUM(amount), 0) as total '
-      'FROM udhar_payments GROUP BY customerId',
+      'SELECT customerid, COALESCE(SUM(amount), 0) as total '
+      'FROM udhar_payments GROUP BY customerid',
     );
 
-    final balances = <int, double>{};
+    final balances = <String, double>{};
     for (final row in salesRows) {
-      final id = row['customerId'] as int;
+      final id = row['customerid'] as String;
       balances[id] = (row['total'] as num).toDouble();
     }
     for (final row in paymentRows) {
-      final id = row['customerId'] as int;
+      final id = row['customerid'] as String;
       balances[id] = (balances[id] ?? 0) - (row['total'] as num).toDouble();
     }
     return balances;
@@ -434,20 +457,20 @@ class DatabaseHelper {
     final endStr = end.toIso8601String();
 
     final cashResult = await db.rawQuery(
-      "SELECT COALESCE(SUM(totalAmount), 0) as total, COUNT(*) as cnt "
-      "FROM sales WHERE paymentType = 'cash' "
-      "AND createdAt >= ? AND createdAt < ?",
+      "SELECT COALESCE(SUM(totalamount), 0) as total, COUNT(*) as cnt "
+      "FROM sales WHERE paymenttype = 'cash' "
+      "AND createdat >= ? AND createdat < ?",
       [startStr, endStr],
     );
     final udharResult = await db.rawQuery(
-      "SELECT COALESCE(SUM(totalAmount), 0) as total, COUNT(*) as cnt "
-      "FROM sales WHERE paymentType = 'udhar' "
-      "AND createdAt >= ? AND createdAt < ?",
+      "SELECT COALESCE(SUM(totalamount), 0) as total, COUNT(*) as cnt "
+      "FROM sales WHERE paymenttype = 'udhar' "
+      "AND createdat >= ? AND createdat < ?",
       [startStr, endStr],
     );
     final paymentsResult = await db.rawQuery(
       'SELECT COALESCE(SUM(amount), 0) as total FROM udhar_payments '
-      'WHERE createdAt >= ? AND createdAt < ?',
+      'WHERE createdat >= ? AND createdat < ?',
       [startStr, endStr],
     );
 
@@ -466,12 +489,12 @@ class DatabaseHelper {
       {int limit = 10}) async {
     final db = await instance.database;
     return await db.rawQuery('''
-      SELECT si.productName as name, SUM(si.quantity) as totalQty,
-             SUM(si.quantity * si.priceAtSale) as totalRevenue
+      SELECT si.productname as name, SUM(si.quantity) as totalQty,
+             SUM(si.quantity * si.priceatsale) as totalRevenue
       FROM sale_items si
-      INNER JOIN sales s ON si.saleId = s.id
-      WHERE s.createdAt >= ? AND s.createdAt < ?
-      GROUP BY si.productName
+      INNER JOIN sales s ON si.saleid = s.id
+      WHERE s.createdat >= ? AND s.createdat < ?
+      GROUP BY si.productname
       ORDER BY totalQty DESC
       LIMIT ?
     ''', [start.toIso8601String(), end.toIso8601String(), limit]);

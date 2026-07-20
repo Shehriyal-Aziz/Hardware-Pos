@@ -35,7 +35,7 @@ class CartNotifier extends Notifier<List<CartItem>> {
     return true;
   }
 
-  void updateQuantity(int productId, int quantity) {
+  void updateQuantity(String productId, int quantity) {
     if (quantity <= 0) {
       removeItem(productId);
       return;
@@ -49,7 +49,7 @@ class CartNotifier extends Notifier<List<CartItem>> {
     ];
   }
 
-  void updatePrice(int productId, double newPrice) {
+  void updatePrice(String productId, double newPrice) {
     state = [
       for (final item in state)
         if (item.product.id == productId)
@@ -59,7 +59,7 @@ class CartNotifier extends Notifier<List<CartItem>> {
     ];
   }
 
-  void applyDiscount(int productId, double discount) {
+  void applyDiscount(String productId, double discount) {
     state = [
       for (final item in state)
         if (item.product.id == productId)
@@ -69,7 +69,7 @@ class CartNotifier extends Notifier<List<CartItem>> {
     ];
   }
 
-  void removeItem(int productId) {
+  void removeItem(String productId) {
     state = state.where((item) => item.product.id != productId).toList();
     if (state.isEmpty) overallDiscount = 0;
   }
