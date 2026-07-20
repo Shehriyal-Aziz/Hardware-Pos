@@ -508,29 +508,51 @@ class _InventoryRow extends StatelessWidget {
         child: Row(
           children: [
             SizedBox(width: 32, child: Text('$index')),
-            SizedBox(
-              width: 48,
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(4),
-                child: product.imagePath != null && product.imagePath!.isNotEmpty
-                    ? Image.file(
-                        File(product.imagePath!),
-                        width: 36,
-                        height: 36,
-                        fit: BoxFit.cover,
-                        errorBuilder: (_, __, ___) => Container(
+            GestureDetector(
+              onTap: () {
+                if (product.imagePath != null && product.imagePath!.isNotEmpty) {
+                  showDialog(
+                    context: context,
+                    builder: (context) => Dialog(
+                      backgroundColor: Colors.transparent,
+                      child: GestureDetector(
+                        onTap: () => Navigator.pop(context),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(12),
+                          child: Image.file(
+                            File(product.imagePath!),
+                            fit: BoxFit.contain,
+                          ),
+                        ),
+                      ),
+                    ),
+                  );
+                }
+              },
+              child: SizedBox(
+                width: 48,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(4),
+                  child: product.imagePath != null && product.imagePath!.isNotEmpty
+                      ? Image.file(
+                          File(product.imagePath!),
+                          width: 36,
+                          height: 36,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => Container(
+                            width: 36,
+                            height: 36,
+                            color: Colors.grey[200],
+                            child: const Icon(Icons.inventory_2_outlined, size: 18, color: Colors.black26),
+                          ),
+                        )
+                      : Container(
                           width: 36,
                           height: 36,
                           color: Colors.grey[200],
                           child: const Icon(Icons.inventory_2_outlined, size: 18, color: Colors.black26),
                         ),
-                      )
-                    : Container(
-                        width: 36,
-                        height: 36,
-                        color: Colors.grey[200],
-                        child: const Icon(Icons.inventory_2_outlined, size: 18, color: Colors.black26),
-                      ),
+                ),
               ),
             ),
             Expanded(

@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:path/path.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'package:path_provider/path_provider.dart';
 
 class DatabaseHelper {
   static final DatabaseHelper instance = DatabaseHelper._init();
@@ -23,46 +24,15 @@ class DatabaseHelper {
       databaseFactory = databaseFactoryFfi;
     }
 
-    final dbPath = await getDatabasesPath();
+    final Directory appSupportDir = await getApplicationSupportDirectory();
+    final dbPath = appSupportDir.path;
     final path = join(dbPath, fileName);
 
-    return await openDatabase(
-      path,
-      version: 2,
-      onCreate: _createDB,
-      onUpgrade: _upgradeDB,
-    );
-  }
-
-  Future _upgradeDB(Database db, int oldVersion, int newVersion) async {
-    if (oldVersion < 2) {
-      // Udhar (credit sale) support: customers, payments against their
-      // running balance, and tagging sales as cash or udhar.
-      await db.execute('''
-        CREATE TABLE customers (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          name TEXT NOT NULL,
-          phone TEXT,
-          createdAt TEXT NOT NULL
-        )
-      ''');
-
-      await db.execute('''
-        CREATE TABLE udhar_payments (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          customerId INTEGER NOT NULL,
-          amount REAL NOT NULL,
-          createdAt TEXT NOT NULL,
-          FOREIGN KEY (customerId) REFERENCES customers (id)
-        )
-      ''');
-
-      // Existing sales default to 'cash' so historical data stays correct.
-      await db.execute(
-        "ALTER TABLE sales ADD COLUMN paymentType TEXT NOT NULL DEFAULT 'cash'",
-      );
-      await db.execute('ALTER TABLE sales ADD COLUMN customerId INTEGER');
-    }
+    // version stays fixed — schema is kept in sync by _ensureSchema below,
+    // so new columns/tables never need a manual version bump.
+    final db = await openDatabase(path, version: 1, onCreate: _createDB);
+    await _ensureSchema(db);
+    return db;
   }
 
   Future _createDB(Database db, int version) async {
@@ -132,6 +102,121 @@ class DatabaseHelper {
 
     // Default inventory password: 1234 (owner can change later)
     await db.insert('settings', {'key': 'inventory_password', 'value': '1234'});
+  }
+
+  /// Self-healing schema check. Runs on every app start. For each table
+  /// this app expects, create it if missing; for each column a table
+  /// expects, add it if missing. This means adding a new column/table to
+  /// the app in the future never requires bumping the DB version number
+  /// or writing a new onUpgrade branch — just add it to the maps below
+  /// and it will be applied automatically on the client's next launch,
+  /// with all existing data left untouched.
+  Future<void> _ensureSchema(Database db) async {
+    final expectedTables = <String, String>{
+      'products': '''
+        CREATE TABLE products (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT NOT NULL,
+          category TEXT NOT NULL,
+          price REAL NOT NULL,
+          stock INTEGER NOT NULL,
+          barcode TEXT,
+          imagePath TEXT,
+          updatedAt TEXT NOT NULL
+        )
+      ''',
+      'sales': '''
+        CREATE TABLE sales (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          totalAmount REAL NOT NULL,
+          discount REAL NOT NULL DEFAULT 0,
+          createdAt TEXT NOT NULL,
+          paymentType TEXT NOT NULL DEFAULT 'cash',
+          customerId INTEGER
+        )
+      ''',
+      'sale_items': '''
+        CREATE TABLE sale_items (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          saleId INTEGER NOT NULL,
+          productId INTEGER NOT NULL,
+          productName TEXT NOT NULL,
+          quantity INTEGER NOT NULL,
+          priceAtSale REAL NOT NULL
+        )
+      ''',
+      'customers': '''
+        CREATE TABLE customers (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT NOT NULL,
+          phone TEXT,
+          createdAt TEXT NOT NULL
+        )
+      ''',
+      'udhar_payments': '''
+        CREATE TABLE udhar_payments (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          customerId INTEGER NOT NULL,
+          amount REAL NOT NULL,
+          createdAt TEXT NOT NULL
+        )
+      ''',
+      'settings': '''
+        CREATE TABLE settings (
+          key TEXT PRIMARY KEY,
+          value TEXT NOT NULL
+        )
+      ''',
+    };
+
+    // columns beyond each table's minimal CREATE above, keyed by table.
+    final expectedColumns = <String, Map<String, String>>{
+      'products': {
+        'imagePath': 'TEXT',
+      },
+      'sales': {
+        'paymentType': "TEXT NOT NULL DEFAULT 'cash'",
+        'customerId': 'INTEGER',
+      },
+    };
+
+    final existingTables = (await db.rawQuery(
+      "SELECT name FROM sqlite_master WHERE type='table'",
+    ))
+        .map((row) => row['name'] as String)
+        .toSet();
+
+    for (final entry in expectedTables.entries) {
+      if (!existingTables.contains(entry.key)) {
+        await db.execute(entry.value);
+      }
+    }
+
+    for (final tableEntry in expectedColumns.entries) {
+      final table = tableEntry.key;
+      final existingColumns = (await db.rawQuery('PRAGMA table_info($table)'))
+          .map((row) => row['name'] as String)
+          .toSet();
+
+      for (final colEntry in tableEntry.value.entries) {
+        if (!existingColumns.contains(colEntry.key)) {
+          await db.execute(
+            'ALTER TABLE $table ADD COLUMN ${colEntry.key} ${colEntry.value}',
+          );
+        }
+      }
+    }
+
+    // Ensure default password exists even on databases created before
+    // settings existed.
+    final passwordRow = await db.query(
+      'settings',
+      where: 'key = ?',
+      whereArgs: ['inventory_password'],
+    );
+    if (passwordRow.isEmpty) {
+      await db.insert('settings', {'key': 'inventory_password', 'value': '1234'});
+    }
   }
 
   Future<int> insertProduct(Map<String, dynamic> product) async {
@@ -259,9 +344,6 @@ class DatabaseHelper {
     return await db.insert('udhar_payments', payment);
   }
 
-  /// Every udhar sale (debit) and every payment (credit) for a customer,
-  /// combined and sorted newest-first, so the owner can scroll through
-  /// one clear history instead of two separate lists.
   Future<List<Map<String, dynamic>>> getCustomerLedger(int customerId) async {
     final db = await instance.database;
 
@@ -299,7 +381,6 @@ class DatabaseHelper {
     return entries;
   }
 
-  /// Total owed = sum of udhar sales - sum of payments.
   Future<double> getCustomerBalance(int customerId) async {
     final db = await instance.database;
 
@@ -319,8 +400,6 @@ class DatabaseHelper {
     return totalUdhar - totalPaid;
   }
 
-  /// Balance for every customer in one query, used by the customer list
-  /// screen so it doesn't run N queries for N customers.
   Future<Map<int, double>> getAllCustomerBalances() async {
     final db = await instance.database;
 
@@ -348,8 +427,6 @@ class DatabaseHelper {
 
   // ---------- Reports ----------
 
-  /// Sums cash sales, udhar sales, and udhar payments received within a
-  /// date range (inclusive start, exclusive end).
   Future<Map<String, double>> getSalesSummary(
       DateTime start, DateTime end) async {
     final db = await instance.database;
@@ -384,7 +461,6 @@ class DatabaseHelper {
     };
   }
 
-  /// Top-selling products by quantity within a date range.
   Future<List<Map<String, dynamic>>> getTopProducts(
       DateTime start, DateTime end,
       {int limit = 10}) async {
