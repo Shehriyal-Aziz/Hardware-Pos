@@ -39,16 +39,11 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
     });
   }
 
-  Future<List<Map<String, dynamic>>> _loadSaleItems(String saleId) async {
+ Future<List<Map<String, dynamic>>> _loadSaleItems(String saleId) async {
     if (_saleItemsCache.containsKey(saleId)) {
       return _saleItemsCache[saleId]!;
     }
-    final db = await DatabaseHelper.instance.database;
-    final items = await db.query(
-      'sale_items',
-      where: 'saleid = ?',
-      whereArgs: [saleId],
-    );
+    final items = await DatabaseHelper.instance.getSaleItems(saleId);
     _saleItemsCache[saleId] = items;
     return items;
   }

@@ -26,6 +26,7 @@ class _InventoryScreenState extends ConsumerState<InventoryScreen> {
   Future<void> _checkPassword() async {
     final storedPassword =
         await DatabaseHelper.instance.getSetting('inventory_password');
+    debugPrint('DEBUG: stored password value = "$storedPassword"');
     if (_passwordController.text == storedPassword) {
       setState(() {
         _authenticated = true;
